@@ -259,7 +259,7 @@ export function attachPiEventTrace(pi: ExtensionAPI): void {
 	if (piEventsAttached) return;
 	piEventsAttached = true;
 	for (const name of PI_EVENTS) {
-		pi.on(name, async (event, ctx) => {
+		pi.on(name, (event, ctx) => {
 			emit(name, event, ctx);
 		});
 	}

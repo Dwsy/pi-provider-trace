@@ -7,22 +7,52 @@ import { MetricHero, TraceDetailCard } from "../components/metric-hero.js";
 import { fetchMetrics, submitScore } from "../data/api.js";
 import { enhanceCodeBlocks } from "../lib/code-block.js";
 import { createKvTable, appendKvRows, createDataTable, appendDataRow } from "../lib/usage-table-dom.js";
+import { exchanges } from "../data/store.js";
+import { exchangePathLabel } from "../lib/exchange-label.js";
 
 function generationsTable(generations) {
   if (!generations?.length) return Empty(t("emptyNoMetrics"));
   const div = el("div", { className: "panel-bone" });
   div.append(el("h3", {}, [t("tabGenerations")]));
-  const table = createDataTable(["id", t("colLatency"), t("colTtft"), t("colTps"), t("colTotal"), t("colCost")]);
+  const table = createDataTable(
+    ["#", t("colHttp"), t("colLatency"), t("colTtft"), t("colTotal"), t("colCost")],
+    "usage-table usage-grid gen-table gen-table-overview",
+  );
+  const cg = document.createElement("colgroup");
+  ["3rem", "", "5.5rem", "5.5rem", "5.5rem", "5.5rem"].forEach((w, i) => {
+    const col = document.createElement("col");
+    if (w) col.style.width = w;
+    if (i === 1) col.className = "col-http";
+    cg.append(col);
+  });
+  table.insertBefore(cg, table.firstChild);
+  let n = 0;
   for (const g of generations) {
+    const ex = exchanges.get(g.id);
+    if (!ex?.request) continue;
+    n += 1;
     const m = g.metrics || {};
-    appendDataRow(table, [
-      g.id,
+    const httpCell =
+      (ex.request.method || "—") + " " + exchangePathLabel(ex.request.url, 56);
+    const tr = document.createElement("tr");
+    const cells = [
+      String(n),
+      httpCell,
       fmtMs(m.latencyMs),
       fmtMs(m.timeToFirstTokenMs),
-      fmtNum(m.tokensPerSecond),
       m.totalTokens || 0,
       (m.totalCost || 0) > 0 ? "$" + m.totalCost.toFixed(4) : "—",
-    ]);
+    ];
+    for (let i = 0; i < cells.length; i++) {
+      const td = document.createElement("td");
+      td.textContent = String(cells[i]);
+      if (i === 1) {
+        td.className = "gen-http";
+        td.title = ex.request.url || "";
+      }
+      tr.append(td);
+    }
+    table.tBodies[0].append(tr);
   }
   div.append(table);
   return div;
@@ -82,8 +112,16 @@ export function renderOverview(panel) {
   };
   form.append(el("div", { className: "score-row" }, [nameIn, valIn, btn]));
   blocks.push(form);
-  const stack = el("div", { className: "panel-stack" });
-  for (const b of blocks) stack.append(b);
+  const stack = el("div", { className: "panel-stack overview-panel" });
+  const layout = el("div", { className: "overview-layout" });
+  const mainCol = el("div", { className: "overview-main" });
+  const sideCol = el("div", { className: "overview-side" });
+  for (const b of blocks) {
+    if (b.classList?.contains("overview-details")) sideCol.append(b);
+    else mainCol.append(b);
+  }
+  layout.append(mainCol, sideCol);
+  stack.append(layout);
   mount(panel, stack);
   enhanceCodeBlocks(panel);
 }

@@ -1,7 +1,5 @@
 # pi-provider-trace
 
-> 中文文档：[README.zh-CN.md](README.zh-CN.md)
-
 Pi extension for **transparent LLM provider debugging**: raw HTTP + SSE wire capture, Pi agent lifecycle events, and normalized **usage / cost / cache hit rate**—all per Pi session.
 
 Tracing is **off by default**. Enable it only when you need visibility.

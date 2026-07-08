@@ -177,12 +177,29 @@ header h1 {
   color: var(--text-muted);
 }
 
+.ex-method {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-live);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
 .ex-title {
+  flex: 1;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 11px;
-  white-space: nowrap;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ex-meta {
@@ -203,13 +220,26 @@ header h1 {
 }
 
 .provider-chip {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  max-width: 140px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
+  font-size: 10px;
+  overflow: hidden;
+}
+
+.provider-chip .pmodel {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 9px;
 }
 
 .provider-chip img {
@@ -301,6 +331,10 @@ header h1 {
   flex-direction: column;
   gap: 12px;
   max-width: 960px;
+}
+
+.panel-stack.overview-panel {
+  max-width: none;
 }
 
 .panel-stack > .panel-bone,
@@ -430,7 +464,27 @@ header h1 {
 
 .usage-table.usage-grid tbody td:first-child {
   font-variant-numeric: normal;
-  word-break: break-all;
+}
+
+.gen-table-overview {
+  table-layout: auto;
+}
+
+.gen-table-overview col.col-http {
+  width: 40%;
+}
+
+.gen-table-overview .gen-http {
+  text-align: left;
+  font-variant-numeric: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gen-table-overview thead th:nth-child(2),
+.gen-table-overview tbody td.gen-http {
+  text-align: left;
 }
 
 .usage-table tr:last-child th,

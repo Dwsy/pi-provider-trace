@@ -84,6 +84,7 @@ export function rollupTraceMetrics(records: TraceRecord[]): TraceMetrics {
 	let generationCount = 0, errorCount = 0;
 	let minStart: string | undefined, maxEnd: string | undefined;
 	for (const ex of exchanges.values()) {
+		if (!ex.requestTs) continue;
 		if (ex.usage) {
 			generationCount += 1;
 			inputTokens += ex.usage.input;

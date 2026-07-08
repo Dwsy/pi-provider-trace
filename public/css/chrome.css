@@ -98,6 +98,60 @@
 }
 
 /* Trace overview — plain stat cards (no decorative sparklines) */
+.panel-stack.overview-panel {
+  max-width: none;
+  width: 100%;
+  min-height: min(100%, 100%);
+  box-sizing: border-box;
+}
+
+.overview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: 14px;
+  align-items: start;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .overview-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.overview-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.overview-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.overview-main .overview-summary {
+  margin-bottom: 0;
+}
+
+.overview-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .overview-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.overview-main .panel-bone {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .overview-summary {
   margin-bottom: 20px;
 }
@@ -115,7 +169,7 @@
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-secondary);
-  max-width: 52em;
+  max-width: none;
 }
 
 .overview-stat-grid {

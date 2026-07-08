@@ -1,6 +1,6 @@
 {
   "name": "pi-provider-trace",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension: transparent LLM provider HTTP/SSE wire trace + observability Web UI",
   "type": "module",
   "main": "./src/index.ts",

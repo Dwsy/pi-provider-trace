@@ -23,6 +23,7 @@ import { DEFAULT_TRACE_UI_PORT, getTraceUiPort, setTraceUiPort } from "./trace-c
 import { getTraceUiUrl, startTraceWebUi, stopTraceWebUi } from "./web-ui.js";
 import { resolveCliLocale } from "./cli-locale.js";
 import { t } from "./web-ui-i18n.js";
+import { setActiveExchangeId } from "./http-exchange-context.js";
 
 function defaultLogDir(): string {
 	return getProviderTraceRoot();
@@ -50,6 +51,7 @@ function applyTracing(on: boolean, ctx?: ExtensionContext): void {
 	} else {
 		uninstallFetchTrace();
 		detachPiEventTrace();
+		setActiveExchangeId(null);
 	}
 }
 
@@ -121,18 +123,22 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 
 	piRef = pi;
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		applySessionFromCtx(ctx);
+		setActiveExchangeId(null);
 		if (process.argv.includes("--mode") && process.argv.includes("rpc")) return;
 		if (!pi.getFlag("trace")) return;
 		applyTracing(true, ctx);
-		const loc = resolveCliLocale();
-		const url = await startTraceUiOnly(ctx);
-		const uiLine = url ? `\n${t(loc, "cmdTraceUiLine", { url })}` : "";
-		ctx.ui.notify(`${t(loc, "cmdTraceEnabled", { status: statusLine() })}${uiLine}`, "info");
+		void startTraceWebUi().catch(() => {});
 	});
-	pi.on("session_shutdown", async () => {
-		await stopTraceWebUi();
+
+	pi.on("session_switch", (_event, ctx) => {
+		applySessionFromCtx(ctx);
+		setActiveExchangeId(null);
+	});
+
+	pi.on("session_shutdown", () => {
+		void stopTraceWebUi();
 		applyTracing(false);
 	});
 

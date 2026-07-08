@@ -1,7 +1,8 @@
 import { state } from "../core/state.js";
 import { t } from "../core/i18n.js";
 import { el, mount, clear } from "../core/dom.js";
-import { fmtMs, shortUrl } from "../lib/format.js";
+import { fmtMs } from "../lib/format.js";
+import { exchangePathLabel, exchangeRowTitle } from "../lib/exchange-label.js";
 import { exchanges } from "../data/store.js";
 import { providerChip } from "../lib/provider.js";
 import { Badge } from "../components/badge.js";
@@ -14,7 +15,10 @@ function matchesSearch(ex) {
 }
 
 function sortedExchanges() {
-  return [...exchanges.values()].filter(matchesSearch).sort((a, b) => (b.lastTs || "").localeCompare(a.lastTs || ""));
+  return [...exchanges.values()]
+    .filter((ex) => ex.request)
+    .filter(matchesSearch)
+    .sort((a, b) => (b.lastTs || "").localeCompare(a.lastTs || ""));
 }
 
 export function renderExchangeList(container, onSelect) {
@@ -26,13 +30,18 @@ export function renderExchangeList(container, onSelect) {
   }
   for (const ex of list) {
     const div = el("div", { className: "ex" + (ex.id === state.selectedExchangeId ? " active" : "") });
-    const row = el("div", { className: "ex-title-row" });
     const u = ex.usage || {};
-    row.append(providerChip(u.provider, u.model, ex.request?.url));
-    const title = el("div", { className: "ex-title", style: "flex:1;min-width:0" });
-    title.textContent = (ex.request?.method || "—") + " " + shortUrl(ex.request?.url, t("noUrl"));
+    const method = ex.request?.method || "—";
+    const url = ex.request?.url;
+    const row = el("div", { className: "ex-title-row" });
+    const methodEl = el("span", { className: "ex-method" }, [method]);
+    row.append(methodEl);
+    row.append(providerChip(u.provider, u.model, url));
+    const title = el("div", { className: "ex-title", title: url || "" });
+    title.textContent = exchangePathLabel(url, 80) || t("noUrl");
     row.append(title);
     div.append(row);
+    div.title = exchangeRowTitle(method, url, t("noUrl"));
     const meta = el("div", { className: "ex-meta" });
     meta.append(Badge(ex.id));
     const st = ex.response?.status;

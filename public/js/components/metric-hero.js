@@ -25,6 +25,7 @@ export function MetricHero(trace) {
       t("overviewLead", {
         gens: String(trace.generationCount || 0),
         tokens: String(trace.totalTokens || 0),
+        records: String((trace.eventCount ?? 0) + (trace.spanCount ?? 0) || "—"),
       }),
     ]),
   );

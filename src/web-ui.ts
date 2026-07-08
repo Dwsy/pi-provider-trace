@@ -200,6 +200,7 @@ function createHandler(getPort: () => number) {
 			const observation = rollupObservationMetrics(exchangeMap.values());
 			const generations: Array<{ id: string; metrics: ReturnType<typeof deriveGenerationMetrics> }> = [];
 			for (const ex of exchangeMap.values()) {
+				if (!ex.requestTs) continue;
 				const metrics = deriveGenerationMetrics(ex);
 				if (metrics) generations.push({ id: ex.id, metrics });
 			}
