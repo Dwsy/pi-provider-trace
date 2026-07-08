@@ -67,22 +67,10 @@ npm install -g @earendil-works/pi-coding-agent
 pi install npm:pi-provider-trace
 ```
 
-Pin a version:
-
-```bash
-pi install npm:pi-provider-trace@0.1.0
-```
-
 **Git:**
 
 ```bash
 pi install git:github.com/Dwsy/pi-provider-trace
-```
-
-Optional pin (tag or commit):
-
-```bash
-pi install git:github.com/Dwsy/pi-provider-trace@main
 ```
 
 If the extension is not auto-enabled, add to `~/.pi/agent/settings.json`:

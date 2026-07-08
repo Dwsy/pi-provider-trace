@@ -24,12 +24,6 @@ pi install npm:pi-provider-trace
 pi install git:github.com/Dwsy/pi-provider-trace
 ```
 
-指定分支/标签/提交（可选）：
-
-```bash
-pi install git:github.com/Dwsy/pi-provider-trace@main
-```
-
 若未自动启用，在 `~/.pi/agent/settings.json` 增加：
 
 ```json
