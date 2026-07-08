@@ -1,16 +1,15 @@
 /**
  * pi-provider-trace — raw HTTP + SSE wire capture (hack layer)
  *
- * Default OFF. /trace on (抓包 + 自动开 UI) | /trace ui 仅开 UI
- * Logs per Pi session under provider-trace/sessions/<key>/http-sse.jsonl
+ * Default OFF. /trace on (capture + start Web UI) | /trace ui (UI only)
+ * Logs per Pi session under ~/.pi/provider-trace/sessions/<key>/http-sse.jsonl
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getProviderTraceRoot } from "./trace-paths.js";
 import { applySessionFromCtx, getActiveSession } from "./session-context.js";
-import { sessionLogPath } from "./session-registry.js";
 import {
 	getTraceLogDir,
 	isTraceEnabled,
@@ -19,12 +18,14 @@ import {
 	writeTrace,
 } from "./logger.js";
 import { installFetchTrace, isFetchTraceInstalled, uninstallFetchTrace } from "./trace-fetch.js";
-import { attachPiEventTrace } from "./pi-events.js";
+import { attachPiEventTrace, detachPiEventTrace } from "./pi-events.js";
 import { DEFAULT_TRACE_UI_PORT, getTraceUiPort, setTraceUiPort } from "./trace-config.js";
-import { getTraceUiUrl, openBrowser, startTraceWebUi, stopTraceWebUi } from "./web-ui.js";
+import { getTraceUiUrl, startTraceWebUi, stopTraceWebUi } from "./web-ui.js";
+import { resolveCliLocale } from "./cli-locale.js";
+import { t } from "./web-ui-i18n.js";
 
 function defaultLogDir(): string {
-	return join(getAgentDir(), "provider-trace");
+	return getProviderTraceRoot();
 }
 
 function applyTracing(on: boolean, ctx?: ExtensionContext): void {
@@ -33,6 +34,10 @@ function applyTracing(on: boolean, ctx?: ExtensionContext): void {
 	setTraceEnabled(on);
 	if (on) {
 		installFetchTrace();
+		if (piRef) {
+			attachPiEventTrace(piRef);
+			attachPayloadHook(piRef);
+		}
 		const s = getActiveSession();
 		writeTrace({
 			ts: new Date().toISOString(),
@@ -44,141 +49,16 @@ function applyTracing(on: boolean, ctx?: ExtensionContext): void {
 		});
 	} else {
 		uninstallFetchTrace();
+		detachPiEventTrace();
 	}
 }
 
-async function openTraceUi(ctx: ExtensionContext): Promise<string | null> {
-	try {
-		const url = await startTraceWebUi();
-		try {
-			await openBrowser(url);
-		} catch {
-			ctx.ui.notify("请手动打开浏览器: " + url, "warning");
-		}
-		return url;
-	} catch (err) {
-		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
-		return null;
-	}
-}
+let piRef: ExtensionAPI | null = null;
+let payloadHookAttached = false;
 
-function statusLine(): string {
-	const on = isTraceEnabled() && isFetchTraceInstalled();
-	const dir = getTraceLogDir() ?? defaultLogDir();
-	const ui = getTraceUiUrl();
-	const uiPart = ui ? ` | UI ${ui}` : "";
-	return on ? `ON → ${dir}/sessions/…${uiPart}` : "OFF";
-}
-
-export default function piProviderTrace(pi: ExtensionAPI) {
-	pi.registerFlag("trace", {
-		description: "Enable provider HTTP/SSE trace and open Web UI on startup (same as /trace on)",
-		type: "boolean",
-		default: false,
-	});
-
-	attachPiEventTrace(pi);
-
-	const syncSession = (_event: unknown, ctx: ExtensionContext) => {
-		applySessionFromCtx(ctx);
-	};
-
-	pi.on("session_start", async (_event, ctx) => {
-		syncSession(_event, ctx);
-		if (process.argv.includes("--mode") && process.argv.includes("rpc")) return;
-		if (!pi.getFlag("trace")) return;
-		applyTracing(true, ctx);
-		const url = await openTraceUi(ctx);
-		const uiLine = url ? `\nUI ${url}` : "";
-		ctx.ui.notify(`provider trace ${statusLine()}${uiLine}`, "info");
-	});
-	pi.on("session_switch", syncSession);
-
-	pi.on("session_shutdown", async () => {
-		await stopTraceWebUi();
-		if (isFetchTraceInstalled()) uninstallFetchTrace();
-		setTraceEnabled(false);
-	});
-
-	const traceSubcommandCompletions = (
-		prefix: string,
-	): Array<{ value: string; label: string; description?: string }> | null => {
-		const raw = prefix.trimStart();
-		const lower = raw.toLowerCase();
-		if (lower.includes(" ")) {
-			if (lower.startsWith("port ")) {
-				const portPrefix = lower.slice(5).trim();
-				const ports = [String(DEFAULT_TRACE_UI_PORT), "33000", "8080"];
-				const filtered = ports.filter((p) => p.startsWith(portPrefix));
-				return filtered.length > 0
-					? filtered.map((p) => ({ value: p, label: p, description: "UI port" }))
-					: null;
-			}
-			return null;
-		}
-		const subs = [
-			{ value: "on", label: "on", description: "抓包 + 自动开 Web UI" },
-			{ value: "off", label: "off", description: "关闭抓包" },
-			{ value: "ui", label: "ui", description: "打开 Web UI" },
-			{ value: "path", label: "path", description: "日志根目录" },
-			{ value: "port", label: "port", description: "查看/设置 UI 端口" },
-		];
-		const filtered = subs.filter((s) => s.value.startsWith(lower));
-		return filtered.length > 0 ? filtered : null;
-	};
-
-	pi.registerCommand("trace", {
-		description: "Provider HTTP/SSE trace: on | off | ui | path | port",
-		getArgumentCompletions: traceSubcommandCompletions,
-		handler: async (args, ctx) => {
-			const parts = args.trim().split(/\s+/);
-			const sub = (parts[0] ?? "").toLowerCase();
-
-			if (sub === "on" || sub === "enable" || sub === "1") {
-				applyTracing(true, ctx);
-				const url = await openTraceUi(ctx);
-				const uiLine = url ? `\nUI ${url}` : "";
-				ctx.ui.notify(`provider trace ${statusLine()}${uiLine}`, "info");
-				return;
-			}
-			if (sub === "off" || sub === "disable" || sub === "0") {
-				applyTracing(false, ctx);
-				ctx.ui.notify("provider trace OFF", "info");
-				return;
-			}
-			if (sub === "ui" || sub === "web" || sub === "open") {
-				const url = await openTraceUi(ctx);
-				if (url) ctx.ui.notify(`trace UI: ${url}`, "info");
-				return;
-			}
-			if (sub === "path" || sub === "dir") {
-				ctx.ui.notify(getTraceLogDir() ?? defaultLogDir(), "info");
-				return;
-			}
-
-			if (sub === "port") {
-				const arg = parts[1];
-				if (!arg) {
-					ctx.ui.notify(
-						`UI 端口: ${getTraceUiPort()} (默认 ${DEFAULT_TRACE_UI_PORT})\n/trace port <1024-65535>\nenv PI_PROVIDER_TRACE_UI_PORT\n~/.pi/agent/provider-trace/ui-config.json`,
-						"info",
-					);
-					return;
-				}
-				const n = Number(arg);
-				if (!Number.isFinite(n)) {
-					ctx.ui.notify("无效端口", "error");
-					return;
-				}
-				const p = setTraceUiPort(n, true);
-				ctx.ui.notify(`UI 端口已设为 ${p}，下次 /trace on 或 /trace ui 生效`, "info");
-				return;
-			}
-
-			ctx.ui.notify(`trace: ${statusLine()}\n/trace on | ui | off | path | port`, "info");
-		},
-	});
-
+function attachPayloadHook(pi: ExtensionAPI): void {
+	if (payloadHookAttached) return;
+	payloadHookAttached = true;
 	pi.on("before_provider_request", (event, ctx) => {
 		if (!isTraceEnabled()) return;
 		const s = applySessionFromCtx(ctx);
@@ -196,4 +76,147 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 			// ignore
 		}
 	});
+}
+
+async function startTraceUiOnly(ctx: ExtensionContext): Promise<string | null> {
+	try {
+		return await startTraceWebUi();
+	} catch (err) {
+		const loc = resolveCliLocale();
+		const msg = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(t(loc, "cmdTraceUiStartFailed", { message: msg }), "error");
+		return null;
+	}
+}
+
+function statusLine(loc = resolveCliLocale()): string {
+	const on = isTraceEnabled() && isFetchTraceInstalled();
+	if (!on) return t(loc, "cmdTraceStatusOff");
+	const dir = getTraceLogDir() ?? defaultLogDir();
+	const ui = getTraceUiUrl();
+	const uiPart = ui ? t(loc, "cmdTraceStatusUiSuffix", { url: ui }) : "";
+	return t(loc, "cmdTraceStatusOn", { dir, ui: uiPart });
+}
+
+const TRACE_SUBS = ["on", "off", "ui", "path", "port"] as const;
+
+function traceSubDescriptions(locale: ReturnType<typeof resolveCliLocale>) {
+	return {
+		on: t(locale, "cmdTraceSubOn"),
+		off: t(locale, "cmdTraceSubOff"),
+		ui: t(locale, "cmdTraceSubUi"),
+		path: t(locale, "cmdTraceSubPath"),
+		port: t(locale, "cmdTraceSubPort"),
+	} as const;
+}
+
+export default function piProviderTrace(pi: ExtensionAPI) {
+	const localeAtLoad = resolveCliLocale();
+
+	pi.registerFlag("trace", {
+		description: t(localeAtLoad, "flagTraceDesc"),
+		type: "boolean",
+		default: false,
+	});
+
+	piRef = pi;
+
+	pi.on("session_start", async (_event, ctx) => {
+		applySessionFromCtx(ctx);
+		if (process.argv.includes("--mode") && process.argv.includes("rpc")) return;
+		if (!pi.getFlag("trace")) return;
+		applyTracing(true, ctx);
+		const loc = resolveCliLocale();
+		const url = await startTraceUiOnly(ctx);
+		const uiLine = url ? `\n${t(loc, "cmdTraceUiLine", { url })}` : "";
+		ctx.ui.notify(`${t(loc, "cmdTraceEnabled", { status: statusLine() })}${uiLine}`, "info");
+	});
+	pi.on("session_shutdown", async () => {
+		await stopTraceWebUi();
+		applyTracing(false);
+	});
+
+	const traceSubcommandCompletions = (
+		prefix: string,
+	): Array<{ value: string; label: string; description?: string }> | null => {
+		const loc = resolveCliLocale();
+		const desc = traceSubDescriptions(loc);
+		const raw = prefix.trimStart();
+		const lower = raw.toLowerCase();
+		if (lower.includes(" ")) {
+			if (lower.startsWith("port ")) {
+				const portPrefix = lower.slice(5).trim();
+				const ports = [String(DEFAULT_TRACE_UI_PORT), "33000", "8080"];
+				const filtered = ports.filter((p) => p.startsWith(portPrefix));
+				return filtered.length > 0
+					? filtered.map((p) => ({ value: p, label: p, description: t(loc, "cmdTracePortItem") }))
+					: null;
+			}
+			return null;
+		}
+		const subs = TRACE_SUBS.map((value) => ({
+			value,
+			label: value,
+			description: desc[value],
+		}));
+		const filtered = subs.filter((s) => s.value.startsWith(lower));
+		return filtered.length > 0 ? filtered : null;
+	};
+
+	pi.registerCommand("trace", {
+		description: t(localeAtLoad, "cmdTraceDesc"),
+		getArgumentCompletions: traceSubcommandCompletions,
+		handler: async (args, ctx) => {
+			const loc = resolveCliLocale();
+			const parts = args.trim().split(/\s+/);
+			const sub = (parts[0] ?? "").toLowerCase();
+
+			if (sub === "on" || sub === "enable" || sub === "1") {
+				applyTracing(true, ctx);
+				const url = await startTraceUiOnly(ctx);
+				const uiLine = url ? `\n${t(loc, "cmdTraceUiLine", { url })}` : "";
+				ctx.ui.notify(`${t(loc, "cmdTraceEnabled", { status: statusLine() })}${uiLine}`, "info");
+				return;
+			}
+			if (sub === "off" || sub === "disable" || sub === "0") {
+				applyTracing(false, ctx);
+				ctx.ui.notify(t(loc, "cmdTraceDisabled"), "info");
+				return;
+			}
+			if (sub === "ui" || sub === "web" || sub === "open") {
+				const url = await startTraceUiOnly(ctx);
+				if (url) ctx.ui.notify(t(loc, "cmdTraceUiNotify", { url }), "info");
+				return;
+			}
+			if (sub === "path" || sub === "dir") {
+				ctx.ui.notify(getTraceLogDir() ?? defaultLogDir(), "info");
+				return;
+			}
+
+			if (sub === "port") {
+				const arg = parts[1];
+				if (!arg) {
+					ctx.ui.notify(
+						t(loc, "cmdTracePortShow", {
+							port: String(getTraceUiPort()),
+							defaultPort: String(DEFAULT_TRACE_UI_PORT),
+						}),
+						"info",
+					);
+					return;
+				}
+				const n = Number(arg);
+				if (!Number.isFinite(n)) {
+					ctx.ui.notify(t(loc, "cmdTracePortInvalid"), "error");
+					return;
+				}
+				const p = setTraceUiPort(n, true);
+				ctx.ui.notify(t(loc, "cmdTracePortSet", { port: String(p) }), "info");
+				return;
+			}
+
+			ctx.ui.notify(t(loc, "cmdTraceStatusHelp", { status: statusLine() }), "info");
+		},
+	});
+
 }

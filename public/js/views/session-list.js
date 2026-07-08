@@ -55,6 +55,6 @@ export function renderSessionList(container, selectSession, onStoreCleared) {
     })
     .catch(() => {
       clear(container);
-      container.append(Empty("API error"));
+      container.append(Empty(t("apiError")));
     });
 }

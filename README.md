@@ -61,6 +61,20 @@ npm install -g @earendil-works/pi-coding-agent
 
 ## Installation
 
+**npm (recommended):**
+
+```bash
+pi install npm:@dwsy/pi-provider-trace
+```
+
+Pin a version:
+
+```bash
+pi install npm:@dwsy/pi-provider-trace@0.1.0
+```
+
+**Git:**
+
 ```bash
 pi install git:github.com/Dwsy/pi-provider-trace
 ```
@@ -94,17 +108,17 @@ pi --trace           # CLI: same as /trace on at session start (skip in --mode r
 | Command | Description |
 |---------|-------------|
 | `/trace` | Status and help |
-| `pi --trace` | Enable tracing when Pi starts (plus Web UI when configured) |
-| `/trace on` | Enable fetch patch + Pi event logging |
+| `pi --trace` | Enable tracing when Pi starts + start Web UI (no auto browser) |
+| `/trace on` | Enable capture + start Web UI (prints URL; does not open browser) |
 | `/trace off` | Disable capture |
-| `/trace ui` | Web UI (reuses server if already up) |
+| `/trace ui` | Start Web UI (reuses server; does not open browser) |
 | `/trace port [n]` | Show or set UI port (persisted to `ui-config.json`) |
-| `/trace path` | Log root under `getAgentDir()/provider-trace` |
+| `/trace path` | Log root `~/.pi/provider-trace` |
 
 ## On-disk layout
 
 ```
-~/.pi/agent/provider-trace/
+~/.pi/provider-trace/
   registry.json
   sessions/<sessionKey>/
     http-sse.jsonl
@@ -116,7 +130,7 @@ pi --trace           # CLI: same as /trace on at session start (skip in --mode r
 
 ## Web UI port
 
-Priority: runtime `/trace port N` (saved) → `~/.pi/agent/provider-trace/ui-config.json` → `PI_PROVIDER_TRACE_UI_PORT` → default **32211**.
+Priority: runtime `/trace port N` (saved) → `~/.pi/provider-trace/ui-config.json` → `PI_PROVIDER_TRACE_UI_PORT` → default **32211**.
 
 ## Web UI (`http://127.0.0.1:<port>/`)
 

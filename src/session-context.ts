@@ -39,13 +39,13 @@ export function resolveSessionFromCtx(ctx: { cwd: string; sessionManager: Sessio
 		const base = basename(file);
 		const stem = base.endsWith(".jsonl") ? base.slice(0, -6) : base;
 		key = sanitizeSessionKey(stem);
-		label = displayName?.trim() || stem;
+		label = displayName?.trim() || "";
 	} else if (sm.getSessionId()) {
 		key = sanitizeSessionKey(sm.getSessionId());
-		label = displayName?.trim() || key;
+		label = displayName?.trim() || "";
 	} else {
 		key = sanitizeSessionKey(`cwd-${ctx.cwd}`);
-		label = displayName?.trim() || basename(ctx.cwd) || "project";
+		label = displayName?.trim() || "";
 	}
 
 	return { key, label };

@@ -12,7 +12,13 @@
 npm install -g @earendil-works/pi-coding-agent
 ```
 
-安装本扩展：
+安装本扩展（npm，推荐）：
+
+```bash
+pi install npm:@dwsy/pi-provider-trace
+```
+
+或 Git：
 
 ```bash
 pi install git:github.com/Dwsy/pi-provider-trace
@@ -70,7 +76,7 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 ## 按 Pi 会话分文件
 
 ```
-~/.pi/agent/provider-trace/
+~/.pi/provider-trace/
   registry.json
   sessions/<sessionKey>/
     http-sse.jsonl
@@ -84,8 +90,8 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 | 命令 | 说明 |
 |------|------|
 | `pi --trace` | CLI：启动时等同 `/trace on`（抓包 + Web UI） |
-| `/trace on` | 抓包 + **自动启动 Web UI** 并尝试打开浏览器 |
-| `/trace ui` | 仅启动/打开 Web UI（不强制开抓包） |
+| `/trace on` | 抓包 + 启动 Web UI（**不**自动打开浏览器，通知里给 URL） |
+| `/trace ui` | 仅启动 Web UI（不自动开浏览器） |
 | `/trace off` | 关闭抓包 |
 | `/trace path` | 日志根目录 |
 
@@ -117,7 +123,7 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 Web UI 默认端口 **32211**，可配置：
 
 - `/trace port` 查看
-- `/trace port 33000` 写入 `~/.pi/agent/provider-trace/ui-config.json`
+- `/trace port 33000` 写入 `~/.pi/provider-trace/ui-config.json`
 - 环境变量 `PI_PROVIDER_TRACE_UI_PORT`（未写文件时）
 
 `http://127.0.0.1:<port>/`（多次 `/trace ui` 复用同一服务；改端口后下次 `ui` 会换监听）。

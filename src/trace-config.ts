@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getProviderTraceRoot } from "./trace-paths.js";
 
 export const DEFAULT_TRACE_UI_PORT = 32211;
 
@@ -11,7 +11,7 @@ type UiConfig = { port: number };
 let runtimePort: number | null = null;
 
 function configPath(): string {
-	return join(getAgentDir(), "provider-trace", CONFIG_NAME);
+	return join(getProviderTraceRoot(), CONFIG_NAME);
 }
 
 function clampPort(n: number): number {
@@ -50,7 +50,7 @@ export function setTraceUiPort(port: number, persist = true): number {
 	const p = clampPort(port);
 	runtimePort = p;
 	if (persist) {
-		const dir = join(getAgentDir(), "provider-trace");
+		const dir = getProviderTraceRoot();
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 		writeFileSync(configPath(), JSON.stringify({ port: p }, null, 2), "utf8");
 	}

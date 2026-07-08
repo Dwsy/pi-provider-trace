@@ -89,7 +89,7 @@ export function renderPanel(panel, onListRefresh) {
           const box = document.getElementById("mediaBox");
           if (!box) return;
           const h = el("div", { className: "panel-dark" });
-          h.append(el("h3", {}, ["Media"]));
+          h.append(el("h3", {}, [t("mediaTitle")]));
           for (const m of media) {
             if (m.url) {
               const img = el("img", { src: m.url, alt: "", className: "media-preview", referrerPolicy: "no-referrer" });

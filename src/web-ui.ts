@@ -3,7 +3,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getProviderTraceRoot } from "./trace-paths.js";
 import {
 	getHttpSseLogPath,
 	getTraceLogDir,
@@ -20,7 +20,8 @@ import {
 } from "./session-registry.js";
 import { getActiveSession } from "./session-context.js";
 import { DEFAULT_TRACE_UI_PORT, getTraceUiPort } from "./trace-config.js";
-import { I18N } from "./web-ui-i18n.js";
+import { I18N, t } from "./web-ui-i18n.js";
+import { resolveCliLocale } from "./cli-locale.js";
 import { providerIconMapForUi } from "./provider-resolve.js";
 import { readPublicFile } from "./web-ui-static.js";
 import {
@@ -96,7 +97,7 @@ export function getTraceUiUrl(): string | null {
 
 function ensureLogDir(): string {
 	if (!getTraceLogDir()) {
-		setTraceLogDir(join(getAgentDir(), "provider-trace"));
+		setTraceLogDir(getProviderTraceRoot());
 	}
 	return getTraceLogDir()!;
 }
@@ -371,11 +372,8 @@ export async function startTraceWebUi(): Promise<string> {
 				boundPort = null;
 				server = null;
 				if (err.code === "EADDRINUSE") {
-					reject(
-						new Error(
-							`端口 ${port} 已被占用。/trace port <端口> 或 PI_PROVIDER_TRACE_UI_PORT 或 ~/.pi/agent/provider-trace/ui-config.json`,
-						),
-					);
+					const loc = resolveCliLocale();
+					reject(new Error(t(loc, "cmdTracePortInUse", { port: String(port) })));
 					return;
 				}
 				reject(err);

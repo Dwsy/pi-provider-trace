@@ -11,7 +11,7 @@ import { createKvTable, appendKvRows, createDataTable, appendDataRow } from "../
 function generationsTable(generations) {
   if (!generations?.length) return Empty(t("emptyNoMetrics"));
   const div = el("div", { className: "panel-bone" });
-  div.append(el("h3", {}, ["Generations"]));
+  div.append(el("h3", {}, [t("tabGenerations")]));
   const table = createDataTable(["id", t("colLatency"), t("colTtft"), t("colTps"), t("colTotal"), t("colCost")]);
   for (const g of generations) {
     const m = g.metrics || {};
@@ -53,20 +53,8 @@ export function renderOverview(panel) {
   }
   const tr = state.sessionMetrics.trace;
   const blocks = [MetricHero(tr), TraceDetailCard(tr)];
-  const obs = state.sessionMetrics.observation;
-  if (obs?.metrics) {
-    const om = obs.metrics;
-    const odiv = el("div", { className: "panel-bone" });
-    odiv.append(el("h3", {}, ["Observation rollup (n=" + obs.count + ")"]));
-    const ot = createKvTable();
-    appendKvRows(ot, [
-      ["latency avg", fmtMs(om.latencyMs), "TTFT avg", fmtMs(om.timeToFirstTokenMs)],
-      ["tokens/s", fmtNum(om.tokensPerSecond), "out tok/s", fmtNum(om.outputTokensPerSecond)],
-    ]);
-    odiv.append(ot);
-    blocks.push(odiv);
-  }
-  blocks.push(generationsTable(state.sessionMetrics.generations));
+  const gens = state.sessionMetrics.generations;
+  if (gens?.length) blocks.push(generationsTable(gens));
   const scores = state.sessionMetrics.scores;
   if (scores?.length) {
     const sdiv = el("div", { className: "panel-bone" });

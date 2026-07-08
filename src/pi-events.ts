@@ -184,8 +184,10 @@ function compactDetail(eventName: string, event: unknown): Record<string, unknow
 			}
 			case "after_provider_response":
 				return { status: e.status };
-			case "input":
-				return { source: e.source, textLen: typeof e.text === "string" ? e.text.length : 0 };
+			case "input": {
+				const text = typeof e.text === "string" ? e.text : "";
+				return { source: e.source, textLen: text.length, text: text.slice(0, 2000) };
+			}
 			default:
 				return undefined;
 		}
@@ -250,12 +252,21 @@ const PI_EVENTS = [
 	"model_select",
 ] as const;
 
+let piEventsAttached = false;
+
+/** Register Pi lifecycle hooks once (first /trace on). Pi has no unregister; emit() no-ops when trace off. */
 export function attachPiEventTrace(pi: ExtensionAPI): void {
+	if (piEventsAttached) return;
+	piEventsAttached = true;
 	for (const name of PI_EVENTS) {
 		pi.on(name, async (event, ctx) => {
 			emit(name, event, ctx);
 		});
 	}
+}
+
+export function detachPiEventTrace(): void {
+	/* handlers stay registered; isTraceEnabled() gates emit() */
 }
 
 export function isSessionStructureEvent(eventName: string): boolean {

@@ -1,12 +1,12 @@
 import { state } from "../core/state.js";
 
 const TABS = [
+  { id: "overview", i18n: "tabOverview" },
   { id: "stream", i18n: "tabStream" },
   { id: "req-headers", i18n: "tabReqHeaders" },
   { id: "request-body", i18n: "tabRequestBody" },
   { id: "response", i18n: "tabResponse" },
   { id: "raw", i18n: "tabRaw" },
-  { id: "overview", i18n: "tabOverview" },
   { id: "usage", i18n: "tabUsage" },
   { id: "timeline", i18n: "tabTimeline" },
 ];

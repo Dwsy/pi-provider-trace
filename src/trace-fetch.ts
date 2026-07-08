@@ -99,11 +99,19 @@ export function installFetchTrace(): () => void {
 	installed = true;
 
 	globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		let url: string;
+		if (typeof input === "string") url = input;
+		else if (input instanceof URL) url = input.href;
+		else url = input.url;
+
+		if (!isLikelyLlmUrl(url)) {
+			return originalFetch!(input, init);
+		}
+
 		const id = nextId();
 		const req = input instanceof Request ? input : new Request(input, init);
-		const url = req.url;
 		const method = req.method;
-		const traceThis = isLikelyLlmUrl(url);
+		const traceThis = true;
 
 		let bodyPreview: string | undefined;
 		if (traceThis && req.body) {

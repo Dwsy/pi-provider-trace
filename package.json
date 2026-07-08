@@ -1,9 +1,56 @@
 {
-  "name": "pi-provider-trace",
-  "private": true,
+  "name": "@dwsy/pi-provider-trace",
+  "version": "0.1.0",
+  "description": "Pi extension: transparent LLM provider HTTP/SSE wire trace + observability Web UI",
   "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "public",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build:icons": "node scripts/gen-provider-icons.mjs",
-    "test": "bun src/observability/test/derive-metrics.test.mjs && bun src/observability/test/providers.test.mjs && bun src/observability/test/write-observation.test.mjs && bun src/observability/test/provider-detect.test.mjs && bun src/observability/test/score-aggregates.test.mjs && node scripts/verify-public-ui.mjs"
+    "test": "bun src/observability/test/session-label.test.mjs && bun src/observability/test/derive-metrics.test.mjs && bun src/observability/test/providers.test.mjs && bun src/observability/test/write-observation.test.mjs && bun src/observability/test/provider-detect.test.mjs && bun src/observability/test/score-aggregates.test.mjs && node scripts/verify-public-ui.mjs",
+    "prepublishOnly": "npm run test"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "provider-trace",
+    "observability",
+    "sse",
+    "llm"
+  ],
+  "author": "Dwsy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dwsy/pi-provider-trace.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Dwsy/pi-provider-trace/issues"
+  },
+  "homepage": "https://github.com/Dwsy/pi-provider-trace#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.52.0"
   }
 }
