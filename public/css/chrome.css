@@ -215,11 +215,12 @@ header h1::before {
   vertical-align: middle;
 }
 
-/* List selection rail */
+/* List selection: ring + tint (no border-left rail) */
 .sess.active,
 .ex.active {
-  border-left: 3px solid var(--accent-live);
-  padding-left: 7px;
+  background: color-mix(in srgb, var(--accent-live) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-live) 35%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-live) 22%, transparent);
 }
 
 /* Scrollbars (WebKit) */
