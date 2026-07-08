@@ -1,0 +1,243 @@
+/* Factory instrument chrome — distinctive layer on top of tokens */
+
+/* Subtle film grain on metric cards (dark + light) */
+.panel-bone::after,
+.stream-panel.panel-bone::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+}
+
+.panel-bone,
+.stream-panel.panel-bone {
+  position: relative;
+  overflow: hidden;
+}
+
+/* macOS-style product frame around main stage */
+.trace-stage {
+  background: var(--canvas) !important;
+  border-right: none !important;
+  padding: 8px 8px 8px 0;
+}
+
+.window-chrome {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--chrome);
+}
+
+.window-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.window-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.window-dots .dot-close {
+  background: #ff5f57;
+}
+
+.window-dots .dot-min {
+  background: #febc2e;
+}
+
+.window-dots .dot-max {
+  background: #28c840;
+}
+
+.window-title {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.window-title strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.trace-frame .tabs,
+.trace-stage .tabs {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.trace-frame #panel,
+.trace-stage #panel {
+  margin: 0;
+  border: 1px solid var(--border);
+  flex: 1;
+  min-height: 0;
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--canvas);
+}
+
+/* KPI strip — metric tiles on canvas (not inside bone card) */
+.metric-hero {
+  margin-bottom: 16px;
+}
+
+.metric-hero-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.metric-hero-eyebrow::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-live);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-live) 25%, transparent);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--chrome);
+}
+
+@media (max-width: 900px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.metric-tile {
+  padding: 16px 18px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.metric-grid .metric-tile:nth-child(4n) {
+  border-right: none;
+}
+
+.metric-grid .metric-tile:nth-last-child(-n + 4) {
+  border-bottom: none;
+}
+
+@media (max-width: 900px) {
+  .metric-grid .metric-tile:nth-child(2n) {
+    border-right: none;
+  }
+  .metric-grid .metric-tile:nth-last-child(-n + 2) {
+    border-bottom: none;
+  }
+}
+
+.metric-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.metric-value {
+  display: block;
+  font-family: var(--sans);
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--text);
+}
+
+.metric-value.accent-ok {
+  color: var(--accent-ok);
+}
+
+.metric-value.accent-live {
+  color: var(--accent-live);
+}
+
+.metric-spark {
+  margin-top: 10px;
+  height: 28px;
+  opacity: 0.85;
+}
+
+/* Header wordmark rail */
+header {
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+header h1::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--accent-live);
+  vertical-align: middle;
+}
+
+/* List selection rail */
+.sess.active,
+.ex.active {
+  border-left: 3px solid var(--accent-live);
+  padding-left: 7px;
+}
+
+/* Scrollbars (WebKit) */
+.scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-theme="light"] .panel-bone::after,
+[data-theme="light"] .stream-panel.panel-bone::after {
+  opacity: 0.03;
+}

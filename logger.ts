@@ -1,0 +1,122 @@
+import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { getActiveSession } from "./session-context.js";
+import { sessionLogPath, touchSessionInRegistry } from "./session-registry.js";
+import type { UsageMetrics } from "./usage-metrics.js";
+import { isObservationDualWriteEnabled, observationTraceLine } from "./observability/write-observation.js";
+
+export type TraceRecord = {
+	ts: string;
+	kind: "request" | "response_meta" | "sse_line" | "error" | "pi_event" | "llm_usage" | "observation";
+	id: string;
+	sessionKey?: string;
+	sessionLabel?: string;
+	url?: string;
+	method?: string;
+	status?: number;
+	headers?: Record<string, string>;
+	bodyPreview?: string;
+	line?: string;
+	message?: string;
+	/** Pi extension lifecycle event name */
+	eventName?: string;
+	summary?: string;
+	detail?: Record<string, unknown>;
+	usage?: UsageMetrics;
+};
+
+let logDir: string | null = null;
+let enabled = false;
+const listeners = new Set<(record: TraceRecord) => void>();
+
+export function setTraceLogDir(dir: string): void {
+	logDir = dir;
+	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+}
+
+export function setTraceEnabled(on: boolean): void {
+	enabled = on;
+}
+
+export function isTraceEnabled(): boolean {
+	return enabled;
+}
+
+export function getTraceLogDir(): string | null {
+	return logDir;
+}
+
+export function subscribeTrace(listener: (record: TraceRecord) => void): () => void {
+	listeners.add(listener);
+	return () => listeners.delete(listener);
+}
+
+export function getHttpSseLogPath(sessionKey?: string): string | null {
+	if (!logDir) return null;
+	const key = sessionKey ?? getActiveSession().key;
+	return sessionLogPath(logDir, key);
+}
+
+const SENSITIVE_HEADER = /^(authorization|x-api-key|api-key|cookie)$/i;
+
+export function redactHeaders(headers: Headers | Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (headers instanceof Headers) {
+		headers.forEach((v, k) => {
+			out[k] = SENSITIVE_HEADER.test(k) ? "[redacted]" : v;
+		});
+		return out;
+	}
+	for (const [k, v] of Object.entries(headers)) {
+		out[k] = SENSITIVE_HEADER.test(k) ? "[redacted]" : v;
+	}
+	return out;
+}
+
+export function previewBody(body: unknown, max = 200_000): string | undefined {
+	if (body == null) return undefined;
+	if (typeof body === "string") {
+		return body.length > max ? body.slice(0, max) + "…[truncated]" : body;
+	}
+	if (body instanceof URLSearchParams) return body.toString();
+	if (body instanceof ArrayBuffer) return `[ArrayBuffer ${body.byteLength}]`;
+	if (ArrayBuffer.isView(body)) return `[Binary ${body.byteLength}]`;
+	if (typeof (body as ReadableStream).getReader === "function") return "[ReadableStream]";
+	try {
+		const s = JSON.stringify(body);
+		return s.length > max ? s.slice(0, max) + "…[truncated]" : s;
+	} catch {
+		return `[${Object.prototype.toString.call(body)}]`;
+	}
+}
+
+function enrichRecord(record: TraceRecord): TraceRecord {
+	const active = getActiveSession();
+	return {
+		...record,
+		sessionKey: record.sessionKey ?? active.key,
+		sessionLabel: record.sessionLabel ?? active.label,
+	};
+}
+
+export function writeTrace(record: TraceRecord): void {
+	if (!enabled || !logDir) return;
+	const full = enrichRecord(record);
+	try {
+		const path = sessionLogPath(logDir, full.sessionKey!);
+		appendFileSync(path, `${JSON.stringify(full)}\n`, "utf8");
+		if (isObservationDualWriteEnabled() && full.kind === "llm_usage") {
+			const obsLine = observationTraceLine(full);
+			if (obsLine) appendFileSync(path, `${JSON.stringify(enrichRecord(obsLine))}\n`, "utf8");
+		}
+		touchSessionInRegistry(logDir, full.sessionKey!, full.sessionLabel!, full.ts);
+		for (const l of listeners) {
+			try {
+				l(full);
+			} catch {
+				// ignore
+			}
+		}
+	} catch {
+		// tracing must not break pi
+	}
+}

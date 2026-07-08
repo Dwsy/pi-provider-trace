@@ -1,0 +1,9 @@
+{
+  "name": "pi-provider-trace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:icons": "node scripts/gen-provider-icons.mjs",
+    "test": "bun observability/test/derive-metrics.test.mjs && bun observability/test/providers.test.mjs && bun observability/test/write-observation.test.mjs && bun observability/test/provider-detect.test.mjs && bun observability/test/score-aggregates.test.mjs && node scripts/verify-public-ui.mjs"
+  }
+}

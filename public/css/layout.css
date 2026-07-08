@@ -1,0 +1,127 @@
+/* Prevent shell collapse — header/tabs must not eat the whole viewport */
+
+body {
+  overflow: hidden;
+}
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Top bar: one row, scroll sideways instead of wrapping */
+header {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  gap: 8px;
+}
+
+header h1 {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+header .pill,
+header .stat,
+header .btn,
+header .trace-ui-select,
+header .lang-select,
+header .theme-select {
+  flex-shrink: 0;
+}
+
+header .search.grow {
+  flex: 1 1 100px;
+  min-width: 80px;
+  max-width: 220px;
+}
+
+/* Main column must shrink inside grid */
+#main.trace-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.trace-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  margin: 0 8px 0 12px;
+  box-sizing: border-box;
+}
+
+.trace-frame .window-chrome,
+.trace-frame .tabs,
+.trace-frame #panel {
+  width: 100%;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-sizing: border-box;
+}
+
+.trace-stage .tabs {
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+
+.trace-stage .tab {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.trace-stage #panel.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Narrow: slightly smaller side columns */
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: minmax(160px, 200px) minmax(200px, 260px) minmax(0, 1fr);
+  }
+
+  .trace-stage {
+    padding-right: 8px !important;
+  }
+
+  .trace-frame {
+    margin-left: 8px !important;
+    margin-right: 8px !important;
+  }
+}
+
+@media (max-width: 820px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(120px, 22vh) minmax(140px, 26vh) minmax(0, 1fr);
+  }
+
+  .col {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #main.trace-stage {
+    border-bottom: none;
+  }
+
+  header .stat {
+    display: none;
+  }
+}
