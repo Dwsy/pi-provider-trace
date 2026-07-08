@@ -15,7 +15,7 @@ npm install -g @earendil-works/pi-coding-agent
 安装本扩展（npm，推荐）：
 
 ```bash
-pi install npm:@dwsy/pi-provider-trace
+pi install npm:pi-provider-trace
 ```
 
 或 Git：

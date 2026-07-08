@@ -64,13 +64,13 @@ npm install -g @earendil-works/pi-coding-agent
 **npm (recommended):**
 
 ```bash
-pi install npm:@dwsy/pi-provider-trace
+pi install npm:pi-provider-trace
 ```
 
 Pin a version:
 
 ```bash
-pi install npm:@dwsy/pi-provider-trace@0.1.0
+pi install npm:pi-provider-trace@0.1.0
 ```
 
 **Git:**
