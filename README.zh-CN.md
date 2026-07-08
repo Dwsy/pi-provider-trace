@@ -4,6 +4,34 @@
 
 默认关闭。`/trace on` 开启 fetch 抓包；`/trace ui` 打开可视化。
 
+## 安装
+
+需已安装 [Pi](https://pi.dev)：
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+安装本扩展：
+
+```bash
+pi install git:github.com/Dwsy/pi-provider-trace
+```
+
+指定分支/标签/提交（可选）：
+
+```bash
+pi install git:github.com/Dwsy/pi-provider-trace@main
+```
+
+若未自动启用，在 `~/.pi/agent/settings.json` 增加：
+
+```json
+"+extensions/pi-provider-trace/src/index.ts"
+```
+
+修改后**重启 pi**。
+
 ## 为什么需要 hack（patch `globalThis.fetch`）
 
 Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话边界，但**不能**等价于「对 LLM 供应商的透明抓包」。本扩展的目标是 **wire 级** 调试：真实 URL/方法/头、响应体与 **SSE 逐行**，并在 Web UI 里按单次 HTTP 交换浏览流式输出。

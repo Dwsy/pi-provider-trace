@@ -53,14 +53,31 @@ Pi exposes **official extension events** that are great for billing, payload ins
 
 ## Requirements
 
-- Pi coding agent with extension support (`@earendil-works/pi-coding-agent`)
-- Extension enabled in `settings.json`:
+- [Pi](https://pi.dev) coding agent (`@earendil-works/pi-coding-agent`)
+
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+## Installation
+
+```bash
+pi install git:github.com/Dwsy/pi-provider-trace
+```
+
+Optional pin (tag or commit):
+
+```bash
+pi install git:github.com/Dwsy/pi-provider-trace@main
+```
+
+If the extension is not auto-enabled, add to `~/.pi/agent/settings.json`:
 
 ```json
 "+extensions/pi-provider-trace/src/index.ts"
 ```
 
-Restart Pi after adding or changing the extension.
+Restart Pi after install or settings change.
 
 ## Quick start
 
