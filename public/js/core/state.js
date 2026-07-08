@@ -1,6 +1,8 @@
+import { detectDefaultLocale } from "./locale-detect.js";
+
 /** App-wide mutable state (single source). */
 export const state = {
-  locale: localStorage.getItem("pi-trace-locale") || (navigator.language.startsWith("zh") ? "zh" : "en"),
+  locale: detectDefaultLocale(),
   selectedSessionKey: null,
   selectedExchangeId: null,
   activeTab: "overview",

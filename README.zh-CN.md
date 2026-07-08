@@ -96,7 +96,7 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 前端为 BS 多文件架构：`public/index.html`、`public/css/*`、`public/js/*`（ES modules，无 npm）；详见 `public/js/README.md`。服务端 `web-ui.ts` 提供静态资源与 `/api/*`（i18n、provider-icons、sessions、stream 等）。
 
 - **三栏**：Pi 会话列表 → HTTP 交换 → 详情（流式 / 请求 / 响应 / 原始）
-- **i18n**：右上角 中文 / English（`localStorage` 记忆）
+- **i18n**：未手动选择时，中国大陆时区或浏览器 `zh*` 语言 → 中文，否则英文；右上角可切换（`pi-trace-locale`）
 - **时间线** tab：Pi 扩展事件（`pi_event`）与 HTTP 记录按 `ts` 叠加；默认不展开每条 SSE，可勾选
 - SSE 解析：事件类型、delta 拼接预览
 - 实时流按所选会话过滤；切换会话会重载该会话 JSONL 历史

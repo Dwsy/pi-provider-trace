@@ -49,7 +49,7 @@ Pi exposes **official extension events** that are great for billing, payload ins
 | **Pi events** | Subscribes to extension lifecycle (input, turns, tools, `before_provider_request`, session tree/compact/switch/fork, etc.) as `pi_event` |
 | **Usage** | Parses provider SSE (Anthropic, OpenAI Responses/Completions, …) and Pi `message_end` / `turn_end` usage → `llm_usage` |
 | **Web UI** | Factory-style static UI (`public/`), configurable port (default **32211**), session history, timeline, usage, download/delete |
-| **i18n** | Chinese / English in the UI |
+| **i18n** | Auto **zh** (China TZ or `zh` browser lang), else **en**; manual override in UI (`pi-trace-locale`) |
 
 ## Requirements
 

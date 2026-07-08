@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>pi-provider-trace</title>
 <script>
+(function(){try{var s=localStorage.getItem("pi-trace-locale");var loc=s==="zh"||s==="en"?s:null;if(!loc){var langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||"en"];var zh=langs.some(function(l){return/^zh(-|$)/i.test(String(l));});var tz="";try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch(e){}var cn=/^Asia\/(Shanghai|Urumqi|Chongqing|Harbin|Kashgar)$/i.test(tz);loc=zh||cn?"zh":"en";}document.documentElement.lang=loc==="zh"?"zh-CN":"en";document.documentElement.dataset.locale=loc;}catch(e){document.documentElement.lang="en";document.documentElement.dataset.locale="en";}})();
 (function(){try{var p=localStorage.getItem("pi-trace-theme")||"system";var t=p==="light"||p==="dark"?p:(matchMedia("(prefers-color-scheme:light)").matches?"light":"dark");document.documentElement.setAttribute("data-theme",t);document.documentElement.style.colorScheme=t;}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();
 </script>
 <link rel="stylesheet" href="/css/tokens.css" />
