@@ -57,7 +57,7 @@ Pi exposes **official extension events** that are great for billing, payload ins
 - Extension enabled in `settings.json`:
 
 ```json
-"+extensions/pi-provider-trace/index.ts"
+"+extensions/pi-provider-trace/src/index.ts"
 ```
 
 Restart Pi after adding or changing the extension.
@@ -131,14 +131,14 @@ Priority: runtime `/trace port N` (saved) → `~/.pi/agent/provider-trace/ui-con
 
 ## Module map
 
-`index.ts` · `trace-fetch.ts` · `public/` (HTML/CSS/JS) · `web-ui.ts` · `web-ui-static.ts` · `logger.ts`
+`src/index.ts` · `src/trace-fetch.ts` · `public/` (HTML/CSS/JS) · `src/web-ui.ts` · `src/logger.ts`
 
 ## Observability API
 
 - `GET /api/metrics?session=` — trace + generation metrics (Langfuse-aligned fields, local only)
 - `GET/POST /api/scores?session=` — numeric scores
 - `GET /api/media?session=&exchange=` — multimodal refs
-- Architecture: `docs/observability-architecture.md`, `observability/processors/`
+- Architecture: `docs/observability-architecture.md`, `src/observability/processors/`
 
 > **Langfuse production export**: future work, not in this release. Stub only — see `docs/future-langfuse.md`.
 

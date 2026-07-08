@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const outPath = join(__dirname, "..", "provider-icons.generated.ts");
+const outPath = join(__dirname, "..", "src", "provider-icons.generated.ts");
 
 const LOBE_SVG_BASE =
 	"https://raw.githubusercontent.com/lobehub/lobe-icons/refs/heads/master/packages/static-svg/icons";

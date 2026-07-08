@@ -100,10 +100,10 @@ Web UI 默认端口 **32211**，可配置：
 
 ## Observability / 可观测性
 
-- **Processors → Sinks**：`observability/`（`derive-metrics` 读路径聚合，非 fetch 热路径）
+- **Processors → Sinks**：`src/observability/`（`derive-metrics` 读路径聚合，非 fetch 热路径）
 - `GET /api/metrics?session=` · `GET/POST /api/scores` · `GET /api/media`
 - 详见 `docs/observability-architecture.md`
 
-> **Langfuse 生产导出**：后续拓展，本期不开发。预留 `observability/sinks/langfuse.ts` 桩，见 `docs/future-langfuse.md`。
+> **Langfuse 生产导出**：后续拓展，本期不开发。预留 `src/observability/sinks/langfuse.ts` 桩，见 `docs/future-langfuse.md`。
 
 - 可选 `PI_PROVIDER_TRACE_WRITE_OBSERVATION=1`：JSONL 追加 `kind: observation`（本地，非 Langfuse）

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "public");
+const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
