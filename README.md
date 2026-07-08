@@ -1,43 +1,90 @@
 # pi-provider-trace
 
-默认关闭。`/trace on` 开启 fetch 抓包；`/trace ui` 打开可视化。
+> 中文文档：[README.zh-CN.md](README.zh-CN.md)
 
-## 为什么需要 hack（patch `globalThis.fetch`）
+Pi extension for **transparent LLM provider debugging**: raw HTTP + SSE wire capture, Pi agent lifecycle events, and normalized **usage / cost / cache hit rate**—all per Pi session.
 
-Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话边界，但**不能**等价于「对 LLM 供应商的透明抓包」。本扩展的目标是 **wire 级** 调试：真实 URL/方法/头、响应体与 **SSE 逐行**，并在 Web UI 里按单次 HTTP 交换浏览流式输出。
+Tracing is **off by default**. Enable it only when you need visibility.
 
-### 官方能力 vs 本扩展目标
+## Why a hack (`globalThis.fetch` patch)?
 
-| 能力 | Pi 官方 hook | 仅官方能否满足 |
-|------|----------------|----------------|
-| 发给模型的**逻辑 payload** | `before_provider_request`（可序列化、可改写） | ✅ 足够做 payload 日志 |
-| **HTTP 状态 + 响应头**（读流之前） | `after_provider_response` | ✅ 仅有 meta，**无 body** |
-| **SSE / 流式 body 逐行** | ❌ 无（流由 pi-ai 消费，hook 拿不到） | ❌ |
-| **原始 request**（与代理/baseUrl 一致） | ❌ 无（只有 payload 对象，不是线上字节） | ❌ |
-| 回合结束 **token / cost / timing** | `message_end` | ✅ 账单向够用，**不能**替代抓包 |
-| 会话起止 | `session_start` / `session_shutdown` | ✅ 边界信息 |
-| turn / tool / `/tree` / `/compact` 时间线 | 需额外订阅多类 `pi.on` | ⚠️ 与 HTTP 无统一 exchange id |
+Pi exposes **official extension events** that are great for billing, payload inspection, and session boundaries—but they are **not** equivalent to transparent **wire-level** debugging of LLM provider traffic. This extension targets DevTools/curl-style visibility: real URL/method/headers, response bodies, and **line-by-line SSE**, browsable per HTTP exchange in the Web UI.
 
-文档对 `after_provider_response` 的表述是：在**消费 stream 之前**记录 status 与 headers——因此**不可能**用官方 hook 复现本扩展「Stream SSE」页里的 event/delta 重组。
+### Official hooks vs this extension
 
-### 本扩展采用的双层设计
+| Capability | Pi official | Enough without fetch patch? |
+|------------|-------------|-----------------------------|
+| Logical **request payload** | `before_provider_request` | ✅ Payload logging / rewrite |
+| **Status + response headers** (before stream read) | `after_provider_response` | ✅ Meta only—**no body** |
+| **SSE / streaming body** | ❌ Not exposed (pi-ai consumes the stream) | ❌ |
+| **Raw HTTP request** (as on the wire / via proxy) | ❌ Only serialized payload object | ❌ |
+| **Tokens / cost / timing** per assistant message | `message_end` | ✅ For accounting—not a packet trace |
+| Session boundaries | `session_start` / `session_shutdown` | ✅ |
+| Timeline (turns, tools, `/tree`, `/compact`) | Many separate `pi.on` events | ⚠️ No shared exchange id with HTTP |
 
-1. **Hack 层（默认 `/trace on` 才启用）**  
-   Patch `globalThis.fetch`，对疑似 LLM 请求 `tee()` 响应体，写入 `request` / `response_meta` / `sse_line`，并在流结束后解析 provider usage → `llm_usage`。这是实现 **wire 透明度** 的唯一可靠路径（在 pi-ai 走全局 fetch 的前提下）。
+`after_provider_response` is intentionally fired **before** the response stream is consumed—so official hooks cannot reproduce the **Stream SSE** tab (event types, deltas, reassembled text).
 
-2. **官方 + 扩展事件层**  
-   同时订阅 `before_provider_request`（另存 `provider-payload.jsonl`）、`message_end` / `turn_end`（Pi 侧 usage/cost）、以及 turn/tool/session 树与压缩等 → `pi_event`，与 HTTP 记录按时间戳在同一时间线叠加。
+### Two-layer design
 
-若你只需要「payload 落盘 + 响应头 + 每轮用量」，可参考 pi 自带的 `examples/extensions/provider-payload.ts`，**不必**开启 fetch patch。  
-若你需要 **和浏览器 DevTools / curl 同级别的 SSE 排障**，则需要本扩展的 hack 层——这也是默认 **关闭**、仅 `/trace on` 开启的原因：全局改 `fetch` 有侵入性，应显式 opt-in。
+1. **Hack layer (opt-in via `/trace on` or `pi --trace`)**  
+   Patches `globalThis.fetch`, tees response bodies, logs `request` / `response_meta` / `sse_line`, and folds provider usage from SSE into `llm_usage`. This is the practical way to get wire transparency while pi-ai uses global `fetch`.
 
-### 局限（hack 层）
+2. **Official + extension events**  
+   `before_provider_request` → `provider-payload.jsonl`; `message_end` / `turn_end` for Pi-side usage; turns, tools, tree/compact hooks → `pi_event`, merged on the timeline by timestamp.
 
-- 只捕获走 **`globalThis.fetch`** 的流量；自定义 transport 可能漏抓。
-- URL 过滤为启发式（见 `trace-fetch.ts`），非主流 `baseUrl` 需自行扩展规则。
-- 与 `pi-model-selector-x` 同类思路（运行时 patch），但挂在**网络层**而非 TUI。
+**Payload + headers + per-turn usage only?** Use Pi’s `examples/extensions/provider-payload.ts`—no fetch patch required.  
+**Full SSE / wire troubleshooting?** You need this extension’s hack layer—hence **default off** and explicit `/trace on` (patching `fetch` is invasive).
 
-## 按 Pi 会话分文件
+### Hack-layer limits
+
+- Only traffic through **`globalThis.fetch`**; custom transports may be missed.
+- Heuristic LLM URL filter (`trace-fetch.ts`).
+- Same family of idea as `pi-model-selector-x` (runtime patch), but on the **network** layer, not TUI prototypes.
+
+## Features
+
+| Layer | What you get |
+|--------|----------------|
+| **HTTP (hack)** | Patches `globalThis.fetch`, tees response bodies, logs request/response/SSE lines without breaking pi-ai consumers |
+| **Pi events** | Subscribes to extension lifecycle (input, turns, tools, `before_provider_request`, session tree/compact/switch/fork, etc.) as `pi_event` |
+| **Usage** | Parses provider SSE (Anthropic, OpenAI Responses/Completions, …) and Pi `message_end` / `turn_end` usage → `llm_usage` |
+| **Web UI** | Factory-style static UI (`public/`), configurable port (default **32211**), session history, timeline, usage, download/delete |
+| **i18n** | Chinese / English in the UI |
+
+## Requirements
+
+- Pi coding agent with extension support (`@earendil-works/pi-coding-agent`)
+- Extension enabled in `settings.json`:
+
+```json
+"+extensions/pi-provider-trace/index.ts"
+```
+
+Restart Pi after adding or changing the extension.
+
+## Quick start
+
+```text
+pi --trace           # CLI: same as /trace on at session start (skip in --mode rpc)
+/trace on            # start capture (bound to current Pi session)
+/trace ui            # open http://127.0.0.1:32211/
+/trace off           # stop capture (logs remain on disk)
+/trace path          # show log root directory
+```
+
+## Slash commands
+
+| Command | Description |
+|---------|-------------|
+| `/trace` | Status and help |
+| `pi --trace` | Enable tracing when Pi starts (plus Web UI when configured) |
+| `/trace on` | Enable fetch patch + Pi event logging |
+| `/trace off` | Disable capture |
+| `/trace ui` | Web UI (reuses server if already up) |
+| `/trace port [n]` | Show or set UI port (persisted to `ui-config.json`) |
+| `/trace path` | Log root under `getAgentDir()/provider-trace` |
+
+## On-disk layout
 
 ```
 ~/.pi/agent/provider-trace/
@@ -47,64 +94,52 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
     provider-payload.jsonl
 ```
 
-`sessionKey` 来自当前 session 文件名（无 session 时用 `cwd-…`）。
+- **sessionKey**: Pi session file stem, or `cwd-…` without a session file.
+- Auth headers are redacted in logs.
 
-## 命令
+## Web UI port
 
-| 命令 | 说明 |
-|------|------|
-| `pi --trace` | CLI：启动时等同 `/trace on`（抓包 + Web UI） |
-| `/trace on` | 抓包 + **自动启动 Web UI** 并尝试打开浏览器 |
-| `/trace ui` | 仅启动/打开 Web UI（不强制开抓包） |
-| `/trace off` | 关闭抓包 |
-| `/trace path` | 日志根目录 |
+Priority: runtime `/trace port N` (saved) → `~/.pi/agent/provider-trace/ui-config.json` → `PI_PROVIDER_TRACE_UI_PORT` → default **32211**.
 
-## Web UI
+## Web UI (`http://127.0.0.1:<port>/`)
 
-**Design:** Factory（`docs/design/factory-style-reference.md`）— 深黑画布 + Bone 亮卡，无渐变 hero。
+**Design:** Factory theme — see `docs/design/factory-style-reference.md`. Static assets: `public/index.html`, `public/css/*`, `public/js/*` (ES modules, no npm); see `public/js/README.md`.
 
+- Three columns: Pi sessions → HTTP exchanges → detail (stream / request headers & body / response / raw)
+- Tabs: Overview, Timeline, Stream SSE, Usage, etc.
+- Theme: light / dark / system (`pi-trace-theme` in localStorage)
+- JSON/Markdown `pre` blocks: lightweight highlight + copy button
+- Download JSONL / delete session traces
+- Live updates: `/api/stream?session=<key>` (history via `/api/history`)
 
-前端为 BS 多文件架构：`public/index.html`、`public/css/*`、`public/js/*`（ES modules，无 npm）；详见 `public/js/README.md`。服务端 `web-ui.ts` 提供静态资源与 `/api/*`（i18n、provider-icons、sessions、stream 等）。
+## Trace record kinds
 
-- **三栏**：Pi 会话列表 → HTTP 交换 → 详情（流式 / 请求 / 响应 / 原始）
-- **i18n**：右上角 中文 / English（`localStorage` 记忆）
-- **时间线** tab：Pi 扩展事件（`pi_event`）与 HTTP 记录按 `ts` 叠加；默认不展开每条 SSE，可勾选
-- SSE 解析：事件类型、delta 拼接预览
-- 实时流按所选会话过滤；切换会话会重载该会话 JSONL 历史
+| `kind` | Source |
+|--------|--------|
+| `request` / `response_meta` / `sse_line` / `error` | HTTP fetch patch |
+| `pi_event` | Pi extension lifecycle (incl. `/tree`, `/compact`, switch/fork) |
+| `llm_usage` | SSE fold + `message_end` / `turn_end` |
 
-## 用量 / 成本 / 缓存率
+**Cache hit rate:** `cacheRead / (input + cacheRead)`. Costs use pi-ai `usage.cost` when present.
 
-- **SSE 结束**：从 provider 流解析（Anthropic `message_*`、OpenAI `usage` / `response.completed` 等）→ `kind: llm_usage`
-- **Pi 侧**：`message_end` / `turn_end` 的 `message.usage`（pi-ai 已算 `cost`）→ 同 exchange id 的 `llm_usage`
-- **缓存命中率**：`cacheRead / (input + cacheRead)`
-- Web UI：**用量** tab + 流式页顶部表 + 交换列表 `$` / `%` 徽章
+## Limitations
 
-## Pi 事件（独立于 HTTP）
+- Captures traffic via **`globalThis.fetch`** only.
+- Heuristic LLM URL filter in `trace-fetch.ts`.
+- Configured port must be free (`EADDRINUSE` otherwise).
+- UI is **127.0.0.1** only—logs may contain prompts; keep local.
 
-`/trace on` 后订阅 agent/turn/tool/message/provider 等事件，写入同一 JSONL，`kind: "pi_event"`。
+## Module map
 
-**会话结构 hook**（与 HTTP 时间线叠加）：`session_before_switch` / `session_switch`、`session_before_fork` / `session_fork`、`session_before_tree` / `session_tree`（`/tree` 分支与总结）、`session_before_compact` / `session_compact`（压缩/总结）、`session_info_changed`。详见 `docs/session-hooks.md`。可观测性扩展（Langfuse 对齐指标、processors/sinks）：`docs/observability-architecture.md`，`GET /api/metrics?session=`。时间线可单独勾选「会话/树/压缩」。
+`index.ts` · `trace-fetch.ts` · `public/` (HTML/CSS/JS) · `web-ui.ts` · `web-ui-static.ts` · `logger.ts`
 
-供应商图标：遵循 [Lobe Icons](https://lobehub.com/icons) 静态 SVG CDN（无 React 依赖）。映射见 `provider-icons.generated.ts`，可 `npm run build:icons` 重生成。
+## Observability API
 
-Web UI 默认端口 **32211**，可配置：
+- `GET /api/metrics?session=` — trace + generation metrics (Langfuse-aligned fields, local only)
+- `GET/POST /api/scores?session=` — numeric scores
+- `GET /api/media?session=&exchange=` — multimodal refs
+- Architecture: `docs/observability-architecture.md`, `observability/processors/`
 
-- `/trace port` 查看
-- `/trace port 33000` 写入 `~/.pi/agent/provider-trace/ui-config.json`
-- 环境变量 `PI_PROVIDER_TRACE_UI_PORT`（未写文件时）
+> **Langfuse production export**: future work, not in this release. Stub only — see `docs/future-langfuse.md`.
 
-`http://127.0.0.1:<port>/`（多次 `/trace ui` 复用同一服务；改端口后下次 `ui` 会换监听）。
-
-启动 UI 后会扫描 `sessions/*` 与 `registry.json`，左侧列出**全部历史会话**；可下载 `http-sse.jsonl` / `provider-payload.jsonl`，或删除该会话轨迹目录。
-
-重启 pi 后生效。
-## Observability / 可观测性
-
-- **Processors → Sinks**：`observability/`（`derive-metrics` 读路径聚合，非 fetch 热路径）
-- `GET /api/metrics?session=` · `GET/POST /api/scores` · `GET /api/media`
-- 详见 `docs/observability-architecture.md`
-
-
-> **Langfuse 生产导出**：后续拓展，本期不开发。预留 `observability/sinks/langfuse.ts` 桩，见 `docs/future-langfuse.md`。
-- 可选 `PI_PROVIDER_TRACE_WRITE_OBSERVATION=1`：JSONL 追加 `kind: observation`（本地，非 Langfuse）
-
+- Optional `PI_PROVIDER_TRACE_WRITE_OBSERVATION=1` for local `kind: observation` lines (not Langfuse export)
