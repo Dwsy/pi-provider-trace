@@ -2,7 +2,7 @@
 
 > English: [README.md](README.md)
 
-默认关闭。`/trace on` 开启 fetch 抓包；`/trace ui` 打开可视化。
+默认关闭。`/trace on` 开启 Provider 请求追踪；`/trace ui` 打开开发者观测台。
 
 ## 安装
 
@@ -34,7 +34,7 @@ pi install git:github.com/Dwsy/pi-provider-trace
 
 ## 为什么需要 hack（patch `globalThis.fetch`）
 
-Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话边界，但**不能**等价于「对 LLM 供应商的透明抓包」。本扩展的目标是 **wire 级** 调试：真实 URL/方法/头、响应体与 **SSE 逐行**，并在 Web UI 里按单次 HTTP 交换浏览流式输出。
+Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话边界，但**不能**观察 Provider 返回的响应流。本扩展补足真实 URL/方法/响应头、TTFT、实时增量、最终文本/推理和工具参数，并把它们与 Pi 会话及工具生命周期联动。
 
 ### 官方能力 vs 本扩展目标
 
@@ -48,18 +48,18 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 | 会话起止 | `session_start` / `session_shutdown` | ✅ 边界信息 |
 | turn / tool / `/tree` / `/compact` 时间线 | 需额外订阅多类 `pi.on` | ⚠️ 与 HTTP 无统一 exchange id |
 
-文档对 `after_provider_response` 的表述是：在**消费 stream 之前**记录 status 与 headers——因此**不可能**用官方 hook 复现本扩展「Stream SSE」页里的 event/delta 重组。
+文档对 `after_provider_response` 的表述是：在**消费 stream 之前**记录 status 与 headers——因此**不可能**用官方 hook 复现本扩展的实时增量、TTFT、完成文本、推理内容与工具参数。
 
 ### 本扩展采用的双层设计
 
 1. **Hack 层（默认 `/trace on` 才启用）**  
-   Patch `globalThis.fetch`，对疑似 LLM 请求 `tee()` 响应体，写入 `request` / `response_meta` / `sse_line`，并在流结束后解析 provider usage → `llm_usage`。这是实现 **wire 透明度** 的唯一可靠路径（在 pi-ai 走全局 fetch 的前提下）。
+   Patch `globalThis.fetch`，对疑似 LLM 请求 `tee()` 响应体。Provider 行被归并为节流的 `stream_update` 增量 patch，并在内存中折叠成当前快照；流结束只写一条 `stream_result`。Usage 同样增量折叠，不保留原始 SSE 行。
 
 2. **官方 + 扩展事件层**  
    同时订阅 `before_provider_request`（另存 `provider-payload.jsonl`）、`message_end` / `turn_end`（Pi 侧 usage/cost）、以及 turn/tool/session 树与压缩等 → `pi_event`，与 HTTP 记录按时间戳在同一时间线叠加。
 
 若你只需要「payload 落盘 + 响应头 + 每轮用量」，可参考 pi 自带的 `examples/extensions/provider-payload.ts`，**不必**开启 fetch patch。  
-若你需要 **和浏览器 DevTools / curl 同级别的 SSE 排障**，则需要本扩展的 hack 层——这也是默认 **关闭**、仅 `/trace on` 开启的原因：全局改 `fetch` 有侵入性，应显式 opt-in。
+若你需要 **实时 Provider 流、TTFT 与完成结果排障**，则需要本扩展的 hack 层——这也是默认 **关闭**、仅 `/trace on` 开启的原因：全局改 `fetch` 有侵入性，应显式 opt-in。
 
 ### 局限（hack 层）
 
@@ -79,6 +79,15 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 
 `sessionKey` 来自当前 session 文件名（无 session 时用 `cwd-…`）。
 
+### 写盘策略（瞬时流 → 单条最终结果）
+
+- `stream_update`：文本/推理增量 patch 加当前工具状态，最多每 50ms 推送一次；Logger 在内存中折叠为当前完整快照，绝不落盘。
+- `stream_result`：响应流正常结束时只写一条；读取失败时也只写一条 `state: error` 的部分结果。
+- `request` / `response_meta` / `pi_event` / `llm_usage` / `error` 仍作为低频事实写入 JSONL。
+- 旧日志若含 `sse_line`，历史 API 会在服务端先折叠为一条兼容结果，不会再把数千行发给浏览器。
+
+Logger 对新 `stream_update` 和旧 `sse_line` 都明确禁止落盘，因此不存在逐 token 或逐 SSE 行写盘路径。
+
 ## 命令
 
 | 命令 | 说明 |
@@ -91,15 +100,17 @@ Pi 扩展已提供一批**官方事件**，适合记账、改 payload、会话�
 
 ## Web UI
 
-**Design:** Factory（`docs/design/factory-style-reference.md`）— 深黑画布 + Bone 亮卡，无渐变 hero。
+前端是面向开发者的零构建观测台：中性浅色/深色、单一青绿色状态色、线性证据区，不依赖 CDN 或前端框架。运行时只有一份 CSS 和六个原生 ES Modules，详见 `public/js/README.md`。
 
-前端为 BS 多文件架构：`public/index.html`、`public/css/*`、`public/js/*`（ES modules，无 npm）；详见 `public/js/README.md`。服务端 `web-ui.ts` 提供静态资源与 `/api/*`（i18n、provider-icons、sessions、stream 等）。
-
-- **三栏**：Pi 会话列表 → HTTP 交换 → 详情（流式 / 请求 / 响应 / 原始）
-- **i18n**：未手动选择时，中国大陆时区或浏览器 `zh*` 语言 → 中文，否则英文；右上角可切换（`pi-trace-locale`）
-- **时间线** tab：Pi 扩展事件（`pi_event`）与 HTTP 记录按 `ts` 叠加；默认不展开每条 SSE，可勾选
-- SSE 解析：事件类型、delta 拼接预览
-- 实时流按所选会话过滤；切换会话会重载该会话 JSONL 历史
+- 桌面路径：Pi 会话 → 模型请求账本 → 证据检查器；移动端按同一路径单面板浏览。
+- 默认“联动”视图：Pi 输入/上下文 → HTTP 边界 → TTFT/累计模型流 → 工具调用/结果。
+- 证据页签：联动、输入、输出、时间线、原始。
+- “输入”先结构化展示生成参数（temperature、top_p、token 上限等）、可用工具定义/Schema、历史工具调用与结果，原始 Payload 保留在末尾。
+- 全局搜索覆盖会话、endpoint/model、payload、最终输出与工具参数。
+- 浅色/深色主题、`prefers-reduced-motion`、加载/空/错状态。
+- 桌面三栏支持拖动调宽和独立折叠；窄屏自动切为单面板，避免检查器被挤出视口。
+- 会话支持批量选择、合并导出 JSONL 与并发批量删除；批量删除仍需显式确认。
+- 工具调用在流中增量归并，并从后续请求 payload 关联 tool result。
 
 ## 用量 / 成本 / 缓存率
 
@@ -122,7 +133,7 @@ Web UI 默认端口 **32211**，可配置：
 
 `http://127.0.0.1:<port>/`（多次 `/trace ui` 复用同一服务；改端口后下次 `ui` 会换监听）。
 
-启动 UI 后会扫描 `sessions/*` 与 `registry.json`，左侧列出**全部历史会话**；可下载 `http-sse.jsonl` / `provider-payload.jsonl`，或删除该会话轨迹目录。
+启动 UI 后会扫描 `sessions/*` 与 `registry.json`，左侧列出**全部历史会话**；可单独或批量下载/删除会话轨迹，批量导出按文件流合并，不会一次性把全部日志读入内存。
 
 重启 pi 后生效。
 

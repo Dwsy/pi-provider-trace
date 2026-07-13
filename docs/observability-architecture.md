@@ -1,6 +1,6 @@
 # 可观测性架构（Langfuse 对齐）
 
-原则：**LLM wire + Pi 事件 = 事实源**；指标/UI/导出 = **processors + sinks**。
+原则：**LLM 请求/完成结果 + Pi 事件 = 持久事实源**；实时流快照 = **内存状态**；指标/UI/导出 = **processors + sinks**。
 
 ## Langfuse 指标对照
 
@@ -14,7 +14,7 @@
 
 ## 三层
 
-1. **Sources** — `trace-fetch`, `pi-events`, `provider-payload.jsonl`
+1. **Sources** — `trace-fetch`（live `stream_update` + durable `stream_result`）、`pi-events`、`provider-payload.jsonl`
 2. **Processors** — `usage-metrics`, `derive-metrics`, 未来 media/scores
 3. **Sinks** — JSONL, Web UI；（**Langfuse 生产连接 = 后续拓展，本期不开发**，见 `docs/future-langfuse.md`）
 

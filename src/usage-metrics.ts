@@ -250,28 +250,39 @@ export function extractUsageFromSseJson(obj: unknown): Partial<UsageMetrics> | n
 	return null;
 }
 
-export function foldSseUsage(lines: string[]): UsageMetrics | null {
-	let acc = emptyMetrics("sse");
-	let any = false;
-	for (const line of lines) {
+/** Incremental usage reducer; it never retains raw provider rows. */
+export class SseUsageAccumulator {
+	private acc = emptyMetrics("sse");
+	private hasUsage = false;
+
+	acceptLine(line: string): void {
 		const t = line.trim();
-		if (!t.startsWith("data:")) continue;
+		if (!t.startsWith("data:")) return;
 		const payload = t.slice(5).trim();
-		if (payload === "[DONE]") continue;
+		if (payload === "[DONE]") return;
 		try {
 			const obj = JSON.parse(payload) as unknown;
 			const part = extractUsageFromSseJson(obj);
 			if (part) {
-				acc = mergeUsage(acc, part);
-				any = true;
+				this.acc = mergeUsage(this.acc, part);
+				this.hasUsage = true;
 			}
 		} catch {
 			// skip
 		}
 	}
-	if (!any && acc.totalTokens === 0) return null;
-	acc.cacheHitRate = cacheHitRate(acc.input, acc.cacheRead);
-	return acc;
+
+	result(): UsageMetrics | null {
+		if (!this.hasUsage && this.acc.totalTokens === 0) return null;
+		this.acc.cacheHitRate = cacheHitRate(this.acc.input, this.acc.cacheRead);
+		return { ...this.acc };
+	}
+}
+
+export function foldSseUsage(lines: string[]): UsageMetrics | null {
+	const accumulator = new SseUsageAccumulator();
+	for (const line of lines) accumulator.acceptLine(line);
+	return accumulator.result();
 }
 
 export function formatUsageShort(m: UsageMetrics, locale: "zh" | "en"): string {

@@ -1,5 +1,14 @@
 import { createServer, type Server } from "node:http";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	createReadStream,
+	existsSync,
+	openSync,
+	readFileSync,
+	readSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -8,6 +17,7 @@ import {
 	getHttpSseLogPath,
 	getTraceLogDir,
 	isTraceEnabled,
+	listLiveTraceRecords,
 	setTraceLogDir,
 	subscribeTrace,
 	type TraceRecord,
@@ -34,6 +44,7 @@ import {
 import { extractMediaFromRequestBody } from "./observability/media-extract.js";
 import { appendScore, listScores } from "./observability/scores-store.js";
 import type { ScoreEvent } from "./observability/types.js";
+import { StreamAccumulator } from "./stream-result.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,38 +53,92 @@ export const TRACE_UI_PORT = DEFAULT_TRACE_UI_PORT;
 
 let server: Server | null = null;
 let boundPort: number | null = null;
-const sseClients = new Set<(data: string) => void>();
+type StreamClient = { sessionKey?: string; send(data: string): void };
+
+const sseClients = new Set<StreamClient>();
 let unsubscribe: (() => void) | null = null;
 
 function broadcast(record: TraceRecord): void {
 	const line = `data: ${JSON.stringify(record)}\n\n`;
-	for (const send of sseClients) {
+	for (const client of sseClients) {
+		if (client.sessionKey && record.sessionKey !== client.sessionKey) continue;
 		try {
-			send(line);
+			client.send(line);
 		} catch {
-			sseClients.delete(send);
+			sseClients.delete(client);
 		}
 	}
 }
 
 function tailJsonl(path: string, maxLines = 800): TraceRecord[] {
 	if (!existsSync(path)) return [];
+	let fd: number | null = null;
 	try {
-		const raw = readFileSync(path, "utf8");
-		const lines = raw.split("\n").filter((l) => l.trim());
-		const slice = lines.slice(-maxLines);
+		const size = statSync(path).size;
+		const maxBytes = 8 * 1024 * 1024;
+		const length = Math.min(size, maxBytes);
+		const start = Math.max(0, size - length);
+		const buffer = Buffer.alloc(length);
+		fd = openSync(path, "r");
+		readSync(fd, buffer, 0, length, start);
+		let raw = buffer.toString("utf8");
+		if (start > 0) {
+			const firstLineEnd = raw.indexOf("\n");
+			raw = firstLineEnd >= 0 ? raw.slice(firstLineEnd + 1) : "";
+		}
+		const lines = raw.split("\n").filter((line) => line.trim());
 		const out: TraceRecord[] = [];
-		for (const line of slice) {
+		for (const line of lines) {
 			try {
 				out.push(JSON.parse(line) as TraceRecord);
 			} catch {
 				// skip
 			}
 		}
-		return out;
+		return compactLegacySseRecords(out).slice(-maxLines);
 	} catch {
 		return [];
+	} finally {
+		if (fd != null) closeSync(fd);
 	}
+}
+
+/** Old captures remain readable without sending thousands of raw rows to the browser. */
+export function compactLegacySseRecords(records: TraceRecord[]): TraceRecord[] {
+	const durableResultIds = new Set(
+		records.filter((record) => record.kind === "stream_result").map((record) => record.id),
+	);
+	const groups = new Map<string, { accumulator: StreamAccumulator; last: TraceRecord }>();
+	const compacted: TraceRecord[] = [];
+
+	for (const record of records) {
+		if (record.kind !== "sse_line") {
+			compacted.push(record);
+			continue;
+		}
+		if (durableResultIds.has(record.id)) continue;
+		let group = groups.get(record.id);
+		if (!group) {
+			group = { accumulator: new StreamAccumulator(), last: record };
+			groups.set(record.id, group);
+		}
+		group.last = record;
+		if (record.line) group.accumulator.acceptLine(record.line, record.ts);
+	}
+
+	for (const [id, group] of groups) {
+		compacted.push({
+			ts: group.last.ts,
+			kind: "stream_result",
+			id,
+			sessionKey: group.last.sessionKey,
+			sessionLabel: group.last.sessionLabel,
+			url: group.last.url,
+			stream: group.accumulator.snapshot("complete"),
+		});
+	}
+
+	return compacted.sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
 function writePortFile(port: number): void {
@@ -87,6 +152,22 @@ function writePortFile(port: number): void {
 		);
 	} catch {
 		// ignore
+	}
+}
+
+/** True if something on `port` responds like this extension's Trace Web UI. */
+export async function probeTraceUiOnPort(port: number): Promise<boolean> {
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), 800);
+	try {
+		const res = await fetch(`http://127.0.0.1:${port}/api/status`, { signal: ctrl.signal });
+		if (!res.ok) return false;
+		const body = (await res.json()) as { traceEnabled?: unknown; port?: unknown };
+		return typeof body.traceEnabled === "boolean" && typeof body.port === "number";
+	} catch {
+		return false;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -168,6 +249,47 @@ function createHandler(getPort: () => number) {
 				"Content-Disposition": `attachment; filename="${filename}"`,
 			});
 			res.end(body);
+			return;
+		}
+
+		if (req.method === "GET" && url.pathname === "/api/download-batch") {
+			const keys = [...new Set(url.searchParams.getAll("session"))];
+			if (!keys.length || keys.length > 200 || keys.some((key) => !/^[a-zA-Z0-9._-]+$/.test(key))) {
+				res.writeHead(400);
+				res.end("bad sessions");
+				return;
+			}
+			const files = keys
+				.map((key) => resolveSessionDownloadPath(logDir, key, "http-sse"))
+				.filter((path): path is string => Boolean(path));
+			if (!files.length) {
+				res.writeHead(404);
+				res.end("not found");
+				return;
+			}
+			res.writeHead(200, {
+				"Content-Type": "application/x-ndjson",
+				"Content-Disposition": `attachment; filename="provider-trace-${files.length}-sessions.jsonl"`,
+				"Cache-Control": "no-store",
+			});
+			let current: ReturnType<typeof createReadStream> | null = null;
+			let index = 0;
+			const pipeNext = () => {
+				if (res.writableEnded || res.destroyed) return;
+				if (index >= files.length) {
+					res.end();
+					return;
+				}
+				current = createReadStream(files[index++]);
+				current.once("error", pipeNext);
+				current.once("end", () => {
+					if (!res.writableEnded) res.write("\n");
+					pipeNext();
+				});
+				current.pipe(res, { end: false });
+			};
+			res.once("close", () => current?.destroy());
+			pipeNext();
 			return;
 		}
 
@@ -289,7 +411,7 @@ function createHandler(getPort: () => number) {
 			const path = getHttpSseLogPath(key);
 			const records = path ? tailJsonl(path, limit) : [];
 			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify(records));
+			res.end(JSON.stringify({ records, live: listLiveTraceRecords(key) }));
 			return;
 		}
 
@@ -297,32 +419,34 @@ function createHandler(getPort: () => number) {
 			const sessionKey = url.searchParams.get("session") ?? undefined;
 			res.writeHead(200, {
 				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache",
+				"Cache-Control": "no-cache, no-transform",
 				Connection: "keep-alive",
+				"X-Accel-Buffering": "no",
 			});
-			const send = (chunk: string) => {
-				try {
+			const client: StreamClient = {
+				sessionKey,
+				send(chunk) {
 					res.write(chunk);
-				} catch {
-					sseClients.delete(send);
-				}
+				},
 			};
-			sseClients.add(send);
-
-			// Live-only for a selected session: UI already loads history via GET /api/history.
-			// Replaying the full JSONL here duplicates every pi_event / HTTP row in the timeline.
-			if (!sessionKey) {
-				for (const s of listAllSessions(logDir)) {
-					const path = getHttpSseLogPath(s.key);
-					if (path) {
-						for (const rec of tailJsonl(path, 200)) {
-							send(`data: ${JSON.stringify(rec)}\n\n`);
-						}
-					}
-				}
+			sseClients.add(client);
+			res.write(": connected\n\n");
+			for (const record of listLiveTraceRecords(sessionKey)) {
+				client.send(`data: ${JSON.stringify(record)}\n\n`);
 			}
-
-			req.on("close", () => sseClients.delete(send));
+			const heartbeat = setInterval(() => {
+				try {
+					client.send(": keepalive\n\n");
+				} catch {
+					sseClients.delete(client);
+					clearInterval(heartbeat);
+				}
+			}, 15_000);
+			heartbeat.unref();
+			req.on("close", () => {
+				clearInterval(heartbeat);
+				sseClients.delete(client);
+			});
 			return;
 		}
 
@@ -367,21 +491,32 @@ export async function startTraceWebUi(): Promise<string> {
 
 	if (!server) {
 		boundPort = port;
-		server = createServer(createHandler(() => boundPort ?? port));
+		const loc = resolveCliLocale();
+		const pending = createServer(createHandler(() => boundPort ?? port));
 		await new Promise<void>((resolve, reject) => {
-			server!.once("error", (err: NodeJS.ErrnoException) => {
-				boundPort = null;
-				server = null;
+			pending.once("error", (err: NodeJS.ErrnoException) => {
 				if (err.code === "EADDRINUSE") {
-					const loc = resolveCliLocale();
-					reject(new Error(t(loc, "cmdTracePortInUse", { port: String(port) })));
+					void (async () => {
+						if (await probeTraceUiOnPort(port)) {
+							boundPort = port;
+							writePortFile(port);
+							resolve();
+							return;
+						}
+						boundPort = null;
+						reject(new Error(t(loc, "cmdTracePortInUse", { port: String(port) })));
+					})();
 					return;
 				}
+				boundPort = null;
 				reject(err);
 			});
-			server!.listen(port, "127.0.0.1", () => resolve());
+			pending.listen(port, "127.0.0.1", () => {
+				server = pending;
+				writePortFile(port);
+				resolve();
+			});
 		});
-		writePortFile(port);
 	}
 
 	return `http://127.0.0.1:${boundPort ?? port}/`;

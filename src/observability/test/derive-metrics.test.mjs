@@ -7,8 +7,21 @@ import {
 
 const records = [
 	{ ts: "2026-01-01T00:00:00.000Z", kind: "request", id: "ex1", url: "https://api.anthropic.com/v1/messages" },
-	{ ts: "2026-01-01T00:00:01.000Z", kind: "sse_line", id: "ex1", line: "data: {}" },
-	{ ts: "2026-01-01T00:00:02.000Z", kind: "sse_line", id: "ex1", line: "data: [DONE]" },
+	{
+		ts: "2026-01-01T00:00:02.000Z",
+		kind: "stream_result",
+		id: "ex1",
+		stream: {
+			state: "complete",
+			text: "hello",
+			reasoning: "",
+			toolCalls: [],
+			eventCount: 2,
+			byteCount: 42,
+			firstEventTs: "2026-01-01T00:00:01.000Z",
+			lastEventTs: "2026-01-01T00:00:02.000Z",
+		},
+	},
 	{
 		ts: "2026-01-01T00:00:02.100Z",
 		kind: "llm_usage",

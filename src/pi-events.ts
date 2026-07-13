@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { applySessionFromCtx } from "./session-context.js";
-import { getActiveExchangeId } from "./http-exchange-context.js";
+import { getActiveExchangeId, getMostRecentExchangeId } from "./http-exchange-context.js";
 import { isTraceEnabled, writeTrace } from "./logger.js";
 import { fromPiUsage, type PiUsage } from "./usage-metrics.js";
 
@@ -206,7 +206,7 @@ function writeLlmUsageFromMessage(eventName: string, event: unknown, ctx: Extens
 	const metrics = fromPiUsage(msg.usage, eventName === "turn_end" ? "turn_end" : "message_end", model?.provider, model?.id);
 	if (!metrics) return;
 
-	const exchangeId = getActiveExchangeId();
+	const exchangeId = getActiveExchangeId() ?? getMostRecentExchangeId();
 	writeTrace({
 		ts: new Date().toISOString(),
 		kind: "llm_usage",

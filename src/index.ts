@@ -23,7 +23,7 @@ import { DEFAULT_TRACE_UI_PORT, getTraceUiPort, setTraceUiPort } from "./trace-c
 import { getTraceUiUrl, startTraceWebUi, stopTraceWebUi } from "./web-ui.js";
 import { resolveCliLocale } from "./cli-locale.js";
 import { t } from "./web-ui-i18n.js";
-import { setActiveExchangeId } from "./http-exchange-context.js";
+import { resetExchangeContext } from "./http-exchange-context.js";
 
 function defaultLogDir(): string {
 	return getProviderTraceRoot();
@@ -51,7 +51,7 @@ function applyTracing(on: boolean, ctx?: ExtensionContext): void {
 	} else {
 		uninstallFetchTrace();
 		detachPiEventTrace();
-		setActiveExchangeId(null);
+		resetExchangeContext();
 	}
 }
 
@@ -125,7 +125,7 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		applySessionFromCtx(ctx);
-		setActiveExchangeId(null);
+		resetExchangeContext();
 		if (process.argv.includes("--mode") && process.argv.includes("rpc")) return;
 		if (!pi.getFlag("trace")) return;
 		applyTracing(true, ctx);
@@ -134,7 +134,7 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 
 	pi.on("session_switch", (_event, ctx) => {
 		applySessionFromCtx(ctx);
-		setActiveExchangeId(null);
+		resetExchangeContext();
 	});
 
 	pi.on("session_shutdown", () => {

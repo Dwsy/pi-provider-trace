@@ -38,7 +38,7 @@ Branch summaries are generated when you move the leaf in the session tree.
 
 ```
 input → agent_start → turn_start → context
-  → before_provider_request → HTTP request → SSE… → llm_usage
+  → before_provider_request → HTTP request → stream_update* → stream_result → llm_usage
   → turn_end → tool_call …
 session_before_tree → HTTP (branch summary?) → session_tree
 session_before_compact → HTTP (compaction summary?) → session_compact

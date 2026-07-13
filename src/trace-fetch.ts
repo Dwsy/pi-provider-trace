@@ -1,12 +1,8 @@
-import {
-	previewBody,
-	redactHeaders,
-	writeTrace,
-	type TraceRecord,
-} from "./logger.js";
+import { previewBody, redactHeaders, writeTrace } from "./logger.js";
 import { getActiveExchangeId, setActiveExchangeId } from "./http-exchange-context.js";
-import { foldSseUsageWithMeta } from "./usage-metrics.js";
+import { SseUsageAccumulator } from "./usage-metrics.js";
 import { detectPlatformFromUrl } from "./observability/provider-detect.js";
+import { StreamAccumulator } from "./stream-result.js";
 
 let installed = false;
 let originalFetch: typeof globalThis.fetch | undefined;
@@ -30,8 +26,37 @@ function isLikelyLlmUrl(url: string): boolean {
 async function drainSseLog(id: string, body: ReadableStream<Uint8Array>, url: string): Promise<void> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
+	const stream = new StreamAccumulator();
+	const usage = new SseUsageAccumulator();
 	let buffer = "";
-	const lines: string[] = [];
+	let lastPublishAt = 0;
+	let publishedTextLength = 0;
+	let publishedReasoningLength = 0;
+
+	const acceptLine = (line: string) => {
+		const trimmed = line.trimEnd();
+		if (!trimmed) return;
+		const ts = new Date().toISOString();
+		usage.acceptLine(trimmed);
+		const changed = stream.acceptLine(trimmed, ts);
+		const now = Date.now();
+		if (!changed || now - lastPublishAt < 50) return;
+		lastPublishAt = now;
+		const snapshot = stream.snapshot("streaming");
+		const textDelta = snapshot.text.slice(publishedTextLength);
+		const reasoningDelta = snapshot.reasoning.slice(publishedReasoningLength);
+		publishedTextLength = snapshot.text.length;
+		publishedReasoningLength = snapshot.reasoning.length;
+		writeTrace({
+			ts,
+			kind: "stream_update",
+			id,
+			url,
+			stream: { ...snapshot, text: "", reasoning: "" },
+			streamDelta: { text: textDelta, reasoning: reasoningDelta },
+		});
+	};
+
 	try {
 		for (;;) {
 			const { done, value } = await reader.read();
@@ -41,52 +66,48 @@ async function drainSseLog(id: string, body: ReadableStream<Uint8Array>, url: st
 			while ((idx = buffer.indexOf("\n")) >= 0) {
 				const line = buffer.slice(0, idx);
 				buffer = buffer.slice(idx + 1);
-				const trimmed = line.trimEnd();
-				if (!trimmed) continue;
-				lines.push(trimmed);
-				const rec: TraceRecord = {
-					ts: new Date().toISOString(),
-					kind: "sse_line",
-					id,
-					url,
-					line: trimmed.length > 32_000 ? trimmed.slice(0, 32_000) + "…" : trimmed,
-				};
-				writeTrace(rec);
+				acceptLine(line);
 			}
 		}
-		if (buffer.trim()) {
-			const trimmed = buffer.trim();
-			lines.push(trimmed);
-			writeTrace({
-				ts: new Date().toISOString(),
-				kind: "sse_line",
-				id,
-				url,
-				line: trimmed,
-			});
-		}
+		buffer += decoder.decode();
+		if (buffer.trim()) acceptLine(buffer);
 
-		const folded = foldSseUsageWithMeta(lines, url);
-		if (folded) {
-			const { usage } = folded;
-			const platform = folded.platform ?? detectPlatformFromUrl(url);
-			if (platform && !usage.provider) usage.provider = platform;
+		writeTrace({
+			ts: new Date().toISOString(),
+			kind: "stream_result",
+			id,
+			url,
+			stream: stream.snapshot("complete"),
+		});
+
+		const usageResult = usage.result();
+		if (usageResult) {
+			const platform = detectPlatformFromUrl(url);
+			if (platform && !usageResult.provider) usageResult.provider = platform;
 			writeTrace({
 				ts: new Date().toISOString(),
 				kind: "llm_usage",
 				id,
 				url,
-				usage,
-				summary: `usage (sse) ${usage.provider ?? platform ?? "?"} in ${usage.input} out ${usage.output} cache ${(usage.cacheHitRate * 100).toFixed(0)}%`,
+				usage: usageResult,
+				summary: `usage (sse) ${usageResult.provider ?? platform ?? "?"} in ${usageResult.input} out ${usageResult.output} cache ${(usageResult.cacheHitRate * 100).toFixed(0)}%`,
 			});
 		}
 	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		writeTrace({
+			ts: new Date().toISOString(),
+			kind: "stream_result",
+			id,
+			url,
+			stream: stream.snapshot("error", message),
+		});
 		writeTrace({
 			ts: new Date().toISOString(),
 			kind: "error",
 			id,
 			url,
-			message: err instanceof Error ? err.message : String(err),
+			message,
 		});
 	} finally {
 		if (getActiveExchangeId() === id) setActiveExchangeId(null);
@@ -150,6 +171,13 @@ export function installFetchTrace(): () => void {
 			});
 
 			if (!response.body) {
+				writeTrace({
+					ts: new Date().toISOString(),
+					kind: "stream_result",
+					id,
+					url,
+					stream: new StreamAccumulator().snapshot("complete"),
+				});
 				setActiveExchangeId(null);
 				return response;
 			}

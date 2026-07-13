@@ -1,32 +1,14 @@
-# Trace Web UI（原生多文件）
+# Trace Web UI
 
-无 npm、无构建。浏览器 **ES modules** + 自研小组件。
+无构建步骤、无 CDN、无前端框架。浏览器直接加载六个 ES Modules：
 
-## 目录
+| 文件 | 职责 |
+|---|---|
+| `main.js` | 生命周期、EventSource、交互与局部刷新调度 |
+| `api.js` | `/api/*` 与实时连接边界 |
+| `model.js` | Session / Exchange / Stream 派生模型与工具结果关联 |
+| `view.js` | DOM 渲染、实时输出局部 patch、空/错/加载状态 |
+| `format.js` | 时间、成本、Token、JSON 格式化 |
+| `i18n.js` | 中英文界面文案与 locale 持久化 |
 
-| 路径 | 职责 |
-|------|------|
-| `main.js` | 入口 |
-| `shell/app.js` | 启动、事件绑定、会话切换 |
-| `shell/stream.js` | EventSource |
-| `core/` | state, dom, i18n |
-| `data/` | store, ingest, api |
-| `lib/` | format, provider, sse, usage |
-| `components/` | Empty, Badge, UsageTable, TabBar |
-| `views/` | session-list, exchange-list, exchange-panel, overview, timeline |
-
-## CSS
-
-`public/css/` — tokens, base, components（原 `styles.css` 拆分）
-
-## 兼容
-
-旧单文件 `app.js` 已弃用，由 `/js/main.js` 替代。
-
-## Theme
-
-`core/theme.js` + `css/tokens.css` (`data-theme=light|dark`). Preference: `pi-trace-theme`.
-
-## Design
-
-Factory style: `docs/design/factory-style-reference.md`, `public/css/tokens.css`.
+流式契约：`stream_update` 是文本/推理增量 patch 与当前工具状态，页面在内存折叠后通过 `requestAnimationFrame` 只更新当前输出；`stream_result` 是唯一持久化的最终流记录。前端不再保存或重放原始 SSE 行。

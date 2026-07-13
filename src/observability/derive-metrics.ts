@@ -31,6 +31,11 @@ export function foldExchangeFromRecords(records: TraceRecord[]): Map<string, Exc
 			if (!ex.firstSseTs) ex.firstSseTs = rec.ts;
 			ex.lastSseTs = rec.ts;
 		}
+		if (rec.kind === "stream_result" && rec.stream) {
+			ex.sseLineCount = Math.max(ex.sseLineCount, rec.stream.eventCount);
+			ex.firstSseTs = rec.stream.firstEventTs ?? ex.firstSseTs;
+			ex.lastSseTs = rec.stream.lastEventTs ?? rec.ts;
+		}
 		if (rec.kind === "error") ex.errorCount += 1;
 		if (rec.kind === "llm_usage" && rec.usage) ex.usage = rec.usage;
 	}
