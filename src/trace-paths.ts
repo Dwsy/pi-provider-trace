@@ -1,7 +1,7 @@
-import { dirname, join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-/** Trace logs + UI config under ~/.pi/provider-trace (sibling of agent dir). */
+/** Trace logs + UI config are user-global and independent of the active project. */
 export function getProviderTraceRoot(): string {
-	return join(dirname(getAgentDir()), "provider-trace");
+	return join(homedir(), ".pi", "provider-trace");
 }

@@ -33,6 +33,8 @@ if (!html.includes('type="module"') || !html.includes('/js/main.js')) errors.pus
 if (!html.includes("pi-trace-theme") || !html.includes("pi-trace-locale")) errors.push("early theme/locale boot missing");
 if (!html.includes('id="globalSearch"')) errors.push("global search missing");
 if (!html.includes('data-tab="flow"')) errors.push("linked flow inspector missing");
+if (!html.includes('data-tab="headers"')) errors.push("request headers inspector missing");
+if (!html.includes('data-tab="responseMeta"')) errors.push("response metadata inspector missing");
 if (!css.includes('[data-theme="dark"]')) errors.push("dark theme missing");
 if (!css.includes("@media (max-width: 960px)")) errors.push("mobile single-pane layout missing");
 if (!css.includes("prefers-reduced-motion")) errors.push("reduced motion handling missing");
@@ -42,6 +44,8 @@ if (css.includes("#000000") || css.includes("#000;")) errors.push("pure black is
 for (const file of jsFiles) {
   const source = readFileSync(join(publicDir, "js", file), "utf8");
   if (source.includes("sse_line")) errors.push(`${file} still depends on raw SSE rows`);
+  if (file === "view.js" && source.includes("messages.slice(-8)")) errors.push("Pi context is still limited to recent messages");
+  if (file === "view.js" && source.includes("is-truncated")) errors.push("Pi context still uses hidden truncation");
   for (const match of source.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)) {
     const target = join(publicDir, "js", match[1]);
     if (!existsSync(target)) errors.push(`${file} imports missing ${match[1]}`);

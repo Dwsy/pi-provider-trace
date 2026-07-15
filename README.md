@@ -133,7 +133,7 @@ Priority: runtime `/trace port N` (saved) → `~/.pi/provider-trace/ui-config.js
 
 - Desktop: Pi sessions → model request ledger → evidence inspector; mobile: the same path as one panel at a time.
 - Primary **Flow** view links Pi input/context → HTTP boundary → TTFT/live result → tool calls/results.
-- Evidence tabs: Flow, Input, Output, Timeline, Raw.
+- Evidence tabs: Flow, Input, Headers, Response, Output, Timeline, Raw.
 - Input first exposes generation settings, available tool schemas, and historical tool calls/results as structured evidence; the raw provider payload remains available below.
 - Global search across sessions, endpoint/model, payload, final output, and tool arguments.
 - Theme: light / dark (`pi-trace-theme` in localStorage); reduced-motion support.

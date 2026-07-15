@@ -304,7 +304,9 @@ function sectionHeading(title, meta) {
 
 function stage(label, value, status) {
   const root = node("li", `stage ${status || ""}`);
-  root.append(node("span", "stage-dot"), node("strong", "", label), node("span", "", value || t("waiting")));
+  const header = node("div", "stage-header");
+  header.append(node("span", "stage-dot"), node("strong", "", label));
+  root.append(header, node("span", "stage-value", value || t("waiting")));
   return root;
 }
 
@@ -317,7 +319,7 @@ function renderStages(exchange) {
     stage(t("requestSent"), formatClock(exchange.request?.ts), exchange.request ? "done" : ""),
     stage(t("headersReceived"), exchange.response?.status ? `HTTP ${exchange.response.status}` : "", exchange.response ? "done" : streamState === "error" ? "error" : ""),
     stage(t("firstToken"), formatDuration(exchangeTtft(exchange)), exchange.stream?.firstEventTs ? "done" : streamState === "live" ? "active" : ""),
-    stage(t("toolCalls"), toolCount ? String(toolCount) : "0", toolCount ? "done" : ""),
+    stage(t("toolCalls"), toolCount ? String(toolCount) : streamState === "ok" ? t("notCalled") : "0", toolCount ? "done" : streamState === "ok" ? "skipped" : ""),
     stage(t("completed"), formatDuration(exchangeDuration(exchange)), streamState === "ok" ? "done" : streamState === "error" ? "error" : streamState === "live" ? "active" : ""),
   );
   return rail;
@@ -345,7 +347,7 @@ function messageRow(message) {
   const row = node("div", "message-row");
   row.append(node("span", `role-label ${message.role || ""}`, roleName(message.role)));
   const hasEvents = Boolean(message.toolCalls?.length || message.toolResults?.length);
-  const content = node("div", `message-content${message.text?.length > 3600 ? " is-truncated" : ""}`);
+  const content = node("div", `message-content${message.text?.length > 3600 ? " is-scrollable" : ""}`);
   if (message.text) content.append(node("div", "message-text", message.text));
   else if (!hasEvents && !message.media?.length) content.append(node("div", "message-text", t("emptyValue")));
   if (message.media?.length) {
@@ -385,14 +387,13 @@ function contextMessages(exchange) {
   return messages;
 }
 
-function renderContext(exchange, full = false) {
+function renderContext(exchange) {
   const section = node("section", "evidence-section");
   const messages = contextMessages(exchange);
-  const visible = full ? messages : messages.slice(-8);
   section.append(sectionHeading(t("piContext"), `${messages.length} messages · ${t("piContextHint")}`));
   const thread = node("div", "message-thread");
-  if (!visible.length) thread.append(node("div", "notice", t("emptyValue")));
-  for (const message of visible) thread.append(messageRow(message));
+  if (!messages.length) thread.append(node("div", "notice", t("emptyValue")));
+  for (const message of messages) thread.append(messageRow(message));
   section.append(thread);
   return section;
 }
@@ -410,17 +411,18 @@ function renderStreamOutput(exchange) {
   meta.id = "liveStreamMeta";
   heading.append(meta);
   section.append(heading);
+  if (exchange.stream?.reasoning) {
+    const details = node("details", "reasoning-block");
+    details.id = "liveReasoning";
+    details.open = true;
+    details.append(node("summary", "", t("reasoning")), node("pre", "", exchange.stream.reasoning));
+    section.append(details);
+  }
   const output = node("pre", "stream-output", exchange.stream?.text || t("awaitingOutput"));
   output.id = "liveStreamOutput";
   output.classList.toggle("is-empty", !exchange.stream?.text);
   output.classList.toggle("is-live", exchangeState(exchange) === "live");
   section.append(output);
-  if (exchange.stream?.reasoning) {
-    const details = node("details", "reasoning-block");
-    details.id = "liveReasoning";
-    details.append(node("summary", "", t("reasoning")), node("pre", "", exchange.stream.reasoning));
-    section.append(details);
-  }
   return section;
 }
 
@@ -506,7 +508,7 @@ function renderPayload(exchange) {
   const view = node("div", "evidence-view");
   view.append(renderRequestParameters(exchange));
   view.append(renderToolDefinitions(exchange));
-  view.append(renderContext(exchange, true));
+  view.append(renderContext(exchange));
   view.append(codeSection(t("requestPayload"), `${exchange.request?.method || "POST"} · ${endpointPath(exchange.request?.url)}`, prettyJson(parseBody(exchange)), "payload"));
   return view;
 }
@@ -579,7 +581,24 @@ function kvTable(entries) {
   return table;
 }
 
-function renderResponse(exchange) {
+function renderRequestHeaders(exchange) {
+  const view = node("div", "evidence-view");
+  const metadata = node("section", "evidence-section");
+  metadata.append(sectionHeading(t("requestMetadata")));
+  metadata.append(kvTable([
+    [t("method"), exchange.request?.method],
+    [t("endpoint"), exchange.request?.url],
+    [t("requestId"), exchange.id],
+  ]));
+  const headers = node("section", "evidence-section");
+  const entries = Object.entries(exchange.request?.headers || {});
+  headers.append(sectionHeading(t("requestHeaders"), t("requestHeadersHint")));
+  headers.append(entries.length ? kvTable(entries) : node("div", "notice", t("emptyValue")));
+  view.append(metadata, headers);
+  return view;
+}
+
+function renderResponseMeta(exchange) {
   const view = node("div", "evidence-view");
   const response = node("section", "evidence-section");
   response.append(sectionHeading(t("responseHeaders"), exchange.response ? `HTTP ${exchange.response.status}` : t("waiting")));
@@ -595,7 +614,13 @@ function renderResponse(exchange) {
     [t("duration"), formatDuration(exchangeDuration(exchange))],
     ["finishReason", stream?.finishReason],
   ]));
-  view.append(response, summary, renderStreamOutput(exchange));
+  view.append(response, summary);
+  return view;
+}
+
+function renderResponse(exchange) {
+  const view = node("div", "evidence-view");
+  view.append(renderStreamOutput(exchange));
   const tools = renderTools(exchange);
   if (tools) view.append(tools);
   return view;
@@ -658,6 +683,8 @@ export function renderInspector() {
   const views = {
     flow: renderFlow,
     payload: renderPayload,
+    headers: renderRequestHeaders,
+    responseMeta: renderResponseMeta,
     response: renderResponse,
     timeline: renderTimeline,
     raw: renderRaw,
