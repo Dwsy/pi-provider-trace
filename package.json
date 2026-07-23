@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build:icons": "node scripts/gen-provider-icons.mjs",
-    "test": "bun src/observability/test/trace-paths.test.mjs && bun src/observability/test/session-label.test.mjs && bun src/observability/test/derive-metrics.test.mjs && bun src/observability/test/providers.test.mjs && bun src/observability/test/write-observation.test.mjs && bun src/observability/test/provider-detect.test.mjs && bun src/observability/test/score-aggregates.test.mjs && bun src/observability/test/stream-result.test.mjs && bun src/observability/test/logger-stream.test.mjs && bun src/observability/test/http-exchange-context.test.mjs && bun src/observability/test/legacy-sse-compaction.test.mjs && bun src/observability/test/web-ui-port.test.mjs && node public/js/model.test.mjs && node scripts/verify-public-ui.mjs",
+    "test": "bun src/observability/test/trace-paths.test.mjs && bun src/observability/test/session-label.test.mjs && bun src/observability/test/derive-metrics.test.mjs && bun src/observability/test/providers.test.mjs && bun src/observability/test/write-observation.test.mjs && bun src/observability/test/provider-detect.test.mjs && bun src/observability/test/score-aggregates.test.mjs && bun src/observability/test/stream-result.test.mjs && bun src/observability/test/logger-stream.test.mjs && bun src/observability/test/http-exchange-context.test.mjs && bun src/observability/test/legacy-sse-compaction.test.mjs && bun src/observability/test/web-ui-port.test.mjs && node src/observability/test/pi-events-capture.test.mjs && node public/js/model.test.mjs && node public/js/tree.test.mjs && node scripts/verify-public-ui.mjs",
     "prepublishOnly": "npm run test"
   },
   "keywords": [

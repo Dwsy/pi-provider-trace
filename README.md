@@ -131,9 +131,9 @@ Priority: runtime `/trace port N` (saved) → `~/.pi/provider-trace/ui-config.js
 
 **Design:** compact developer instrument with neutral light/dark themes, one restrained teal accent, linear evidence sections, and no external frontend runtime or CDN. Static assets: one CSS file plus six ES Modules; see `public/js/README.md`.
 
-- Desktop: Pi sessions → model request ledger → evidence inspector; mobile: the same path as one panel at a time.
-- Primary **Flow** view links Pi input/context → HTTP boundary → TTFT/live result → tool calls/results.
-- Evidence tabs: Flow, Input, Headers, Response, Output, Timeline, Raw.
+- Desktop: **Pi sessions → turn tree (Prompt → Turn → LLM/Tool/Message) → node detail**; toggle **Requests** for the HTTP wire ledger. Mobile: same path, one panel at a time.
+- Hierarchy matches [pi-langfuse](https://github.com/edxeth/pi-langfuse): user input, per-turn generations, tool args/results, assistant message bodies (bounded full text in `pi_event.detail`).
+- Selecting a **generation** keeps wire evidence tabs: Flow, Input, Headers, Response, Output, Timeline, Raw.
 - Input first exposes generation settings, available tool schemas, and historical tool calls/results as structured evidence; the raw provider payload remains available below.
 - Global search across sessions, endpoint/model, payload, final output, and tool arguments.
 - Theme: light / dark (`pi-trace-theme` in localStorage); reduced-motion support.

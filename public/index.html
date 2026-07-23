@@ -23,7 +23,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/css/app.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314191b'/%3E%3Cpath d='M7 10h8m-8 6h18M7 22h12' stroke='%2355b8aa' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='22' cy='10' r='3' fill='none' stroke='%23dce5e4' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d1d1f'/%3E%3Cpath d='M7 10h8m-8 6h18M7 22h12' stroke='%230a84ff' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='22' cy='10' r='3' fill='none' stroke='%23f5f5f7' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
   <div id="app" class="app-shell" data-mobile-pane="sessions" aria-busy="true">
@@ -32,7 +32,7 @@
         <span class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M3 7h8M3 12h18M3 17h12"/><circle cx="18" cy="7" r="3"/></svg>
         </span>
-        <span class="brand-name">Provider Trace</span>
+        <span class="brand-name">Session Trace</span>
         <span class="brand-context">PI</span>
       </div>
 
@@ -111,16 +111,22 @@
           </button>
         </div>
         <div id="sessionSummary" class="session-summary" aria-label="会话摘要"></div>
-        <div class="request-filters">
-          <select id="providerFilter" aria-label="Provider 筛选">
-            <option value="">全部 Provider</option>
-          </select>
-          <select id="statusFilter" aria-label="状态筛选">
-            <option value="">全部状态</option>
-            <option value="live">流式中</option>
-            <option value="ok">成功</option>
-            <option value="error">失败</option>
-          </select>
+        <div class="requests-toolbar">
+          <div id="listModeToggle" class="list-mode-toggle" role="group" aria-label="列表模式">
+            <button type="button" data-list-mode="requests" aria-pressed="true" data-text="requests">请求</button>
+            <button type="button" data-list-mode="turns" aria-pressed="false" data-text="turns">回合</button>
+          </div>
+          <div class="request-filters">
+            <select id="providerFilter" aria-label="Provider 筛选">
+              <option value="">全部 Provider</option>
+            </select>
+            <select id="statusFilter" aria-label="状态筛选">
+              <option value="">全部状态</option>
+              <option value="live">流式中</option>
+              <option value="ok">成功</option>
+              <option value="error">失败</option>
+            </select>
+          </div>
         </div>
         <div id="requestList" class="pane-scroll request-list" aria-live="polite"></div>
       </section>

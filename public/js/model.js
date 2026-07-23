@@ -7,6 +7,10 @@ export const state = {
   activeSessionKey: null,
   selectedSessionKey: null,
   selectedExchangeId: null,
+  /** @type {{ kind: 'prompt'|'turn'|'generation'|'tool'|'message'|'input', id: string } | null} */
+  selectedNode: null,
+  /** list mode: turns (session tree) | requests (HTTP ledger) */
+  listMode: "requests",
   exchanges: new Map(),
   piEvents: [],
   metrics: null,
@@ -19,6 +23,8 @@ export const state = {
   loadingSessions: true,
   loadingHistory: false,
   error: null,
+  collapsedPrompts: new Set(),
+  collapsedTurns: new Set(),
 };
 
 export function resetSessionTrace() {
@@ -26,7 +32,10 @@ export function resetSessionTrace() {
   state.piEvents.length = 0;
   state.metrics = null;
   state.selectedExchangeId = null;
+  state.selectedNode = null;
   state.error = null;
+  state.collapsedPrompts.clear();
+  state.collapsedTurns.clear();
 }
 
 function ensureExchange(id) {
@@ -471,4 +480,317 @@ export function rawEvidence(exchange) {
     errors: exchange?.errors,
     piEvents: linkedPiEvents(exchange),
   };
+}
+
+function eventTurnIndex(event) {
+  if (typeof event?.turnIndex === "number") return event.turnIndex;
+  if (typeof event?.detail?.turnIndex === "number") return event.detail.turnIndex;
+  return null;
+}
+
+function toolKey(event) {
+  const d = event?.detail || {};
+  return String(d.toolCallId || event?.id || "");
+}
+
+/**
+ * Build Langfuse-style hierarchy: prompt → turn → (generation | tool | message).
+ * Correlates HTTP exchanges into the active turn by timestamp window.
+ */
+export function buildSessionTree() {
+  const events = [...state.piEvents].sort((a, b) => (a.ts || "").localeCompare(b.ts || ""));
+  const exchanges = sortedExchanges().slice().reverse(); // chronological
+  const prompts = [];
+  let prompt = null;
+  let turn = null;
+  let exchangeCursor = 0;
+
+  const openPrompt = (ts, inputEvent) => {
+    prompt = {
+      id: `prompt-${ts || prompts.length}`,
+      kind: "prompt",
+      startTs: ts || null,
+      endTs: null,
+      input: inputEvent?.detail?.text || inputEvent?.summary || "",
+      inputSource: inputEvent?.detail?.source || null,
+      inputEvent: inputEvent || null,
+      turns: [],
+      orphanNodes: [],
+    };
+    prompts.push(prompt);
+    turn = null;
+  };
+
+  const openTurn = (ts, turnIndex) => {
+    if (!prompt) openPrompt(ts, null);
+    turn = {
+      id: `turn-${prompt.id}-${turnIndex ?? prompt.turns.length}`,
+      kind: "turn",
+      turnIndex: turnIndex ?? prompt.turns.length,
+      startTs: ts || null,
+      endTs: null,
+      stopReason: null,
+      usage: null,
+      nodes: [],
+    };
+    prompt.turns.push(turn);
+  };
+
+  const attachPendingExchanges = (untilTs) => {
+    if (!turn) return;
+    while (exchangeCursor < exchanges.length) {
+      const ex = exchanges[exchangeCursor];
+      const ts = ex.request?.ts || ex.lastTs || "";
+      if (untilTs && ts > untilTs) break;
+      if (turn.startTs && ts && ts < turn.startTs) {
+        exchangeCursor += 1;
+        continue;
+      }
+      turn.nodes.push({
+        id: `gen-${ex.id}`,
+        kind: "generation",
+        exchangeId: ex.id,
+        ts,
+        exchange: ex,
+      });
+      exchangeCursor += 1;
+    }
+  };
+
+  const tools = new Map(); // toolCallId → node
+
+  for (const event of events) {
+    const name = event.eventName;
+    const ts = event.ts || "";
+
+    if (name === "input" || name === "before_agent_start") {
+      if (name === "input") openPrompt(ts, event);
+      else if (!prompt || prompt.endTs) openPrompt(ts, null);
+      continue;
+    }
+
+    if (name === "agent_start") {
+      if (!prompt) openPrompt(ts, null);
+      continue;
+    }
+
+    if (name === "turn_start") {
+      attachPendingExchanges(ts);
+      openTurn(ts, eventTurnIndex(event) ?? event.detail?.turnIndex);
+      continue;
+    }
+
+    if (name === "turn_end") {
+      attachPendingExchanges(ts);
+      if (turn) {
+        turn.endTs = ts;
+        turn.stopReason = event.detail?.stopReason || event.detail?.message?.stopReason || null;
+        turn.usage = event.detail?.usage || null;
+        // attach tool results from turn_end payload if tools incomplete
+        for (const tr of event.detail?.toolResults || []) {
+          const key = String(tr.toolCallId || "");
+          if (!key) continue;
+          let node = tools.get(key);
+          if (!node) {
+            node = {
+              id: `tool-${key}`,
+              kind: "tool",
+              toolCallId: key,
+              toolName: tr.toolName || "?",
+              ts,
+              args: null,
+              result: tr,
+              isError: Boolean(tr.isError),
+              events: [],
+            };
+            tools.set(key, node);
+            turn.nodes.push(node);
+          } else if (!node.result) {
+            node.result = tr;
+            node.isError = Boolean(tr.isError);
+          }
+        }
+        turn = null;
+      }
+      continue;
+    }
+
+    if (name === "agent_end") {
+      attachPendingExchanges(ts);
+      if (prompt) prompt.endTs = ts;
+      turn = null;
+      continue;
+    }
+
+    if (name === "tool_execution_start" || name === "tool_call") {
+      if (!turn) openTurn(ts, eventTurnIndex(event));
+      attachPendingExchanges(ts);
+      const key = toolKey(event) || `anon-${event.id}`;
+      let node = tools.get(key);
+      if (!node) {
+        node = {
+          id: `tool-${key}`,
+          kind: "tool",
+          toolCallId: key,
+          toolName: event.detail?.toolName || "?",
+          ts,
+          args: event.detail?.args ?? event.detail?.input ?? null,
+          result: null,
+          isError: false,
+          events: [event],
+          exchangeId: event.exchangeId || null,
+        };
+        tools.set(key, node);
+        turn.nodes.push(node);
+      } else {
+        node.args = node.args ?? event.detail?.args ?? event.detail?.input ?? null;
+        node.toolName = event.detail?.toolName || node.toolName;
+        node.events.push(event);
+      }
+      continue;
+    }
+
+    if (name === "tool_result" || name === "tool_execution_end") {
+      if (!turn) openTurn(ts, eventTurnIndex(event));
+      const key = toolKey(event) || `anon-${event.id}`;
+      let node = tools.get(key);
+      const resultPayload =
+        name === "tool_result"
+          ? event.detail
+          : {
+              toolName: event.detail?.toolName,
+              toolCallId: event.detail?.toolCallId,
+              isError: event.detail?.isError,
+              contentText: event.detail?.resultText,
+              content: event.detail?.result,
+            };
+      if (!node) {
+        node = {
+          id: `tool-${key}`,
+          kind: "tool",
+          toolCallId: key,
+          toolName: event.detail?.toolName || "?",
+          ts,
+          args: event.detail?.input ?? event.detail?.args ?? null,
+          result: resultPayload,
+          isError: Boolean(event.detail?.isError),
+          events: [event],
+          exchangeId: event.exchangeId || null,
+        };
+        tools.set(key, node);
+        turn.nodes.push(node);
+      } else {
+        node.result = resultPayload;
+        node.isError = Boolean(event.detail?.isError);
+        node.events.push(event);
+      }
+      continue;
+    }
+
+    if (name === "message_end" || name === "message_start") {
+      if (!turn) continue;
+      const msg = event.detail?.message;
+      if (!msg) continue;
+      // skip pure assistant streaming shells when generation node exists; still keep user/toolResult
+      const role = msg.role || "?";
+      if (name === "message_start" && role === "assistant") continue;
+      turn.nodes.push({
+        id: `msg-${event.id}`,
+        kind: "message",
+        role,
+        ts,
+        message: msg,
+        stopReason: event.detail?.stopReason || msg.stopReason,
+        usage: event.detail?.usage || msg.usage,
+        event,
+        exchangeId: event.exchangeId || null,
+      });
+      continue;
+    }
+  }
+
+  // remaining exchanges after last turn window
+  if (turn) attachPendingExchanges(null);
+  else if (prompt) {
+    while (exchangeCursor < exchanges.length) {
+      const ex = exchanges[exchangeCursor++];
+      prompt.orphanNodes.push({
+        id: `gen-${ex.id}`,
+        kind: "generation",
+        exchangeId: ex.id,
+        ts: ex.request?.ts || ex.lastTs,
+        exchange: ex,
+      });
+    }
+  } else {
+    // no pi structure — synthetic prompt from exchanges only
+    if (exchanges.length) {
+      openPrompt(exchanges[0].request?.ts || null, null);
+      openTurn(exchanges[0].request?.ts || null, 0);
+      for (const ex of exchanges) {
+        turn.nodes.push({
+          id: `gen-${ex.id}`,
+          kind: "generation",
+          exchangeId: ex.id,
+          ts: ex.request?.ts || ex.lastTs,
+          exchange: ex,
+        });
+      }
+    }
+  }
+
+  return { prompts, events: events.length, exchanges: exchanges.length };
+}
+
+export function selectedTreeNode() {
+  if (!state.selectedNode) return null;
+  const tree = buildSessionTree();
+  const { kind, id } = state.selectedNode;
+  for (const prompt of tree.prompts) {
+    if (kind === "prompt" && prompt.id === id) return prompt;
+    if (kind === "input" && prompt.id === id) return { ...prompt, kind: "input" };
+    for (const node of prompt.orphanNodes || []) {
+      if (node.id === id) return node;
+    }
+    for (const turn of prompt.turns) {
+      if (kind === "turn" && turn.id === id) return turn;
+      for (const node of turn.nodes) {
+        if (node.id === id) return node;
+      }
+    }
+  }
+  return null;
+}
+
+export function selectTreeNode(node) {
+  if (!node) {
+    state.selectedNode = null;
+    return;
+  }
+  state.selectedNode = { kind: node.kind, id: node.id };
+  if (node.kind === "generation" && node.exchangeId) {
+    state.selectedExchangeId = node.exchangeId;
+  } else if (node.exchangeId) {
+    state.selectedExchangeId = node.exchangeId;
+  } else if (node.kind === "turn") {
+    const gen = (node.nodes || []).find((n) => n.kind === "generation");
+    if (gen?.exchangeId) state.selectedExchangeId = gen.exchangeId;
+  }
+}
+
+export function sessionTreeStats(tree = buildSessionTree()) {
+  let turns = 0;
+  let tools = 0;
+  let generations = 0;
+  for (const prompt of tree.prompts) {
+    turns += prompt.turns.length;
+    for (const turn of prompt.turns) {
+      for (const node of turn.nodes) {
+        if (node.kind === "tool") tools += 1;
+        if (node.kind === "generation") generations += 1;
+      }
+    }
+    generations += (prompt.orphanNodes || []).filter((n) => n.kind === "generation").length;
+  }
+  return { prompts: tree.prompts.length, turns, tools, generations };
 }

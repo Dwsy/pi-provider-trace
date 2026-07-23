@@ -13,6 +13,7 @@ import {
   parseBody,
   rawEvidence,
   resetSessionTrace,
+  selectTreeNode,
   selectedExchange,
   sortedExchanges,
   state,
@@ -226,7 +227,10 @@ function connectTraceStream(sessionKey) {
     record(record) {
       const result = ingestRecord(record);
       if (!result.changed) return;
-      if (state.follow && record.kind === "request") state.selectedExchangeId = record.id;
+      if (state.follow && record.kind === "request") {
+        state.selectedExchangeId = record.id;
+        state.selectedNode = { kind: "generation", id: `gen-${record.id}` };
+      }
       if (record.kind === "stream_update") {
         scheduleLivePatch(result.exchange);
         scheduleRequestListRender();
@@ -300,6 +304,7 @@ async function refreshSessions({ reloadCurrent = false } = {}) {
 function selectExchange(exchangeId) {
   if (!state.exchanges.has(exchangeId)) return;
   state.selectedExchangeId = exchangeId;
+  state.selectedNode = { kind: "generation", id: `gen-${exchangeId}` };
   state.follow = false;
   setMobilePane("inspector");
   renderStatic();
@@ -307,13 +312,34 @@ function selectExchange(exchangeId) {
   renderInspector();
 }
 
+function selectNode(kind, id, exchangeId) {
+  selectTreeNode({ kind, id, exchangeId });
+  if (exchangeId && state.exchanges.has(exchangeId)) {
+    state.selectedExchangeId = exchangeId;
+  }
+  state.follow = false;
+  setMobilePane("inspector");
+  renderStatic();
+  renderRequests();
+  renderInspector();
+}
+
+function toggleTreeCollapse(token) {
+  const [scope, ...rest] = String(token || "").split(":");
+  const id = rest.join(":");
+  if (!id) return;
+  const set = scope === "prompt" ? state.collapsedPrompts : state.collapsedTurns;
+  if (set.has(id)) set.delete(id);
+  else set.add(id);
+  renderRequests();
+}
+
 async function copySelected(kind) {
   const exchange = selectedExchange();
-  if (!exchange) return;
   const values = {
-    payload: prettyJson(parseBody(exchange)),
-    raw: prettyJson(rawEvidence(exchange)),
-    output: exchange.stream?.text || "",
+    payload: exchange ? prettyJson(parseBody(exchange)) : "",
+    raw: exchange ? prettyJson(rawEvidence(exchange)) : "",
+    output: exchange?.stream?.text || "",
   };
   const text = values[kind] ?? "";
   try {
@@ -358,8 +384,30 @@ function bindEvents() {
   });
 
   requestList.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-tree-toggle]");
+    if (toggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTreeCollapse(toggle.dataset.treeToggle);
+      return;
+    }
+    const nodeRow = event.target.closest("[data-node-kind]");
+    if (nodeRow) {
+      selectNode(nodeRow.dataset.nodeKind, nodeRow.dataset.nodeId, nodeRow.dataset.exchangeId);
+      return;
+    }
     const row = event.target.closest("[data-exchange-id]");
     if (row) selectExchange(row.dataset.exchangeId);
+  });
+
+  document.getElementById("listModeToggle")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-list-mode]");
+    if (!button) return;
+    state.listMode = button.dataset.listMode === "requests" ? "requests" : "turns";
+    try { localStorage.setItem("pi-trace-list-mode", state.listMode); } catch {}
+    renderSessionContext();
+    renderRequests();
+    renderInspector();
   });
 
   inspectorTabs.addEventListener("click", (event) => {
@@ -397,7 +445,11 @@ function bindEvents() {
 
   followButton.addEventListener("click", () => {
     state.follow = !state.follow;
-    if (state.follow) state.selectedExchangeId = sortedExchanges()[0]?.id || state.selectedExchangeId;
+    if (state.follow) {
+      const id = sortedExchanges()[0]?.id || state.selectedExchangeId;
+      state.selectedExchangeId = id;
+      if (id) state.selectedNode = { kind: "generation", id: `gen-${id}` };
+    }
     renderStatic();
     renderRequests();
     renderInspector();
@@ -475,6 +527,10 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  try {
+    const mode = localStorage.getItem("pi-trace-list-mode");
+    if (mode === "requests" || mode === "turns") state.listMode = mode;
+  } catch {}
   applyDesktopLayout();
   bindEvents();
   bindPaneResizers();

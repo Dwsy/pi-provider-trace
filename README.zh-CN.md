@@ -102,9 +102,9 @@ Logger 对新 `stream_update` 和旧 `sse_line` 都明确禁止落盘，因此�
 
 前端是面向开发者的零构建观测台：中性浅色/深色、单一青绿色状态色、线性证据区，不依赖 CDN 或前端框架。运行时只有一份 CSS 和六个原生 ES Modules，详见 `public/js/README.md`。
 
-- 桌面路径：Pi 会话 → 模型请求账本 → 证据检查器；移动端按同一路径单面板浏览。
-- 默认“联动”视图：Pi 输入/上下文 → HTTP 边界 → TTFT/累计模型流 → 工具调用/结果。
-- 证据页签：联动、输入、请求头、响应、输出、时间线、原始。
+- 桌面路径：**Pi 会话 → 回合树（Prompt→Turn→LLM/Tool/Message）→ 节点详情**；可切换「请求」账本（HTTP wire）。
+- 默认 Turn 树对齐 pi-langfuse：用户输入、每轮 LLM、工具入参/出参、assistant 消息全文。
+- 选中 generation 时证据页签：联动、输入、请求头、响应、输出、时间线、原始。
 - “输入”先结构化展示生成参数（temperature、top_p、token 上限等）、可用工具定义/Schema、历史工具调用与结果，原始 Payload 保留在末尾。
 - 全局搜索覆盖会话、endpoint/model、payload、最终输出与工具参数。
 - 浅色/深色主题、`prefers-reduced-motion`、加载/空/错状态。

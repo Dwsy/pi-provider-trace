@@ -42,6 +42,10 @@ export type TraceRecord = {
 	summary?: string;
 	detail?: Record<string, unknown>;
 	usage?: UsageMetrics;
+	/** Correlates pi_event to active HTTP exchange when known. */
+	exchangeId?: string;
+	/** Active agent turn index when known. */
+	turnIndex?: number;
 };
 
 let logDir: string | null = null;

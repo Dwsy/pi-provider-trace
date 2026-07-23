@@ -14,9 +14,22 @@
 
 ## 三层
 
-1. **Sources** — `trace-fetch`（live `stream_update` + durable `stream_result`）、`pi-events`、`provider-payload.jsonl`
-2. **Processors** — `usage-metrics`, `derive-metrics`, 未来 media/scores
-3. **Sinks** — JSONL, Web UI；（**Langfuse 生产连接 = 后续拓展，本期不开发**，见 `docs/future-langfuse.md`）
+1. **Sources** — `trace-fetch`（live `stream_update` + durable `stream_result`）、`pi-events`（**有界全文** input/tool/message/turn）、`provider-payload.jsonl`
+2. **Processors** — `usage-metrics`, `derive-metrics`, 客户端 `buildSessionTree`（prompt→turn→generation|tool|message）
+3. **Sinks** — JSONL, Web UI（默认 **Turn 树**；可切 HTTP 请求账本）；（**Langfuse 生产连接 = 后续拓展**，见 `docs/future-langfuse.md`）
+
+### 会话层级（对齐 pi-langfuse）
+
+```text
+Session
+└── Prompt (input / before_agent_start)
+    └── Turn (turn_start → turn_end)
+        ├── Generation (HTTP exchange + stream_result)
+        ├── Tool (tool_call / tool_result · args + contentText)
+        └── Message (message_end · role/text/thinking/toolCalls)
+```
+
+`pi_event` 写入 `detail` 全文（预算：args 24k / tool·message 48k / input 8k），并附 `turnIndex` + `exchangeId` 便于关联。
 
 ## API
 

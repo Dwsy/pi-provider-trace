@@ -1,6 +1,7 @@
 import { t, applyStaticText } from "./i18n.js";
 import {
   availableProviders,
+  buildSessionTree,
   exchangeDuration,
   exchangeState,
   exchangeTtft,
@@ -13,7 +14,9 @@ import {
   requestParametersForExchange,
   selectedExchange,
   selectedSession,
+  selectedTreeNode,
   sessionStats,
+  sessionTreeStats,
   state,
   timelineForExchange,
   toolCallsForExchange,
@@ -67,6 +70,10 @@ function node(tag, className, text) {
   if (className) element.className = className;
   if (text != null) element.textContent = String(text);
   return element;
+}
+
+function append(host, ...children) {
+  host.append(...children.filter(Boolean));
 }
 
 function replace(host, ...children) {
@@ -198,18 +205,160 @@ function updateProviderFilter() {
 export function renderSessionContext() {
   const session = selectedSession();
   elements.sessionKeyLabel.textContent = session?.key || "—";
-  elements.sessionTitle.textContent = session?.label || t("requests");
+  elements.sessionTitle.textContent = session?.label || (state.listMode === "turns" ? t("turns") : t("requests"));
   elements.sessionActions.hidden = !session || state.batchMode;
   if (session) elements.exportSession.href = `/api/download?session=${encodeURIComponent(session.key)}&file=http-sse`;
   const stats = sessionStats();
+  const treeStats = sessionTreeStats();
   replace(
     elements.sessionSummary,
-    summaryMetric(stats.requests, t("requestCount")),
+    summaryMetric(treeStats.prompts || stats.requests, t("prompts")),
+    summaryMetric(treeStats.turns, t("turnCount")),
     summaryMetric(formatTokens(stats.tokens), t("tokens")),
     summaryMetric(formatCost(stats.cost), t("cost")),
-    summaryMetric(stats.errors, t("errors")),
   );
   updateProviderFilter();
+  updateListModeToggle();
+}
+
+function updateListModeToggle() {
+  const host = document.getElementById("listModeToggle");
+  if (!host) return;
+  host.querySelectorAll("[data-list-mode]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.listMode === state.listMode));
+  });
+}
+
+function isSelectedNode(kind, id) {
+  return state.selectedNode?.kind === kind && state.selectedNode?.id === id;
+}
+
+function treeToggle(scope, id, collapsed) {
+  const button = node("button", "tree-toggle");
+  button.type = "button";
+  button.dataset.treeToggle = `${scope}:${id}`;
+  button.dataset.collapsed = String(collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.textContent = collapsed ? "▸" : "▾";
+  return button;
+}
+
+function renderTurnTree() {
+  const tree = buildSessionTree();
+  if (!tree.prompts.length) {
+    replace(elements.requestList, emptyState(t("noTurns"), t("noTurnsHint")));
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const prompt of tree.prompts) {
+    const promptCollapsed = state.collapsedPrompts.has(prompt.id);
+    const promptBlock = node("div", "tree-prompt");
+    const promptRow = node("button", "tree-row prompt-row");
+    promptRow.type = "button";
+    promptRow.dataset.nodeKind = "prompt";
+    promptRow.dataset.nodeId = prompt.id;
+    promptRow.setAttribute("aria-current", String(isSelectedNode("prompt", prompt.id) || isSelectedNode("input", prompt.id)));
+    const promptHead = node("div", "tree-row-head");
+    promptHead.append(
+      treeToggle("prompt", prompt.id, promptCollapsed),
+      node("span", "tree-kind prompt", t("prompt")),
+      node("span", "tree-title", truncate(prompt.input || t("emptyPrompt"), 72)),
+    );
+    const promptMeta = node("div", "tree-meta", `${prompt.turns.length} ${t("turnCount")} · ${formatTimestamp(prompt.startTs)}`);
+    promptRow.append(promptHead, promptMeta);
+    promptBlock.append(promptRow);
+
+    if (!promptCollapsed) {
+      for (const turn of prompt.turns) {
+        const turnCollapsed = state.collapsedTurns.has(turn.id);
+        const turnBlock = node("div", "tree-turn");
+        const turnRow = node("button", "tree-row turn-row");
+        turnRow.type = "button";
+        turnRow.dataset.nodeKind = "turn";
+        turnRow.dataset.nodeId = turn.id;
+        turnRow.setAttribute("aria-current", String(isSelectedNode("turn", turn.id)));
+        const turnHead = node("div", "tree-row-head");
+        append(
+          turnHead,
+          treeToggle("turn", turn.id, turnCollapsed),
+          node("span", "tree-kind turn", `T${turn.turnIndex}`),
+          node("span", "tree-title", turn.stopReason || t("turn")),
+          turn.usage ? node("span", "tree-badge", formatTokens(turn.usage.totalTokens)) : null,
+        );
+        turnRow.append(
+          turnHead,
+          node("div", "tree-meta", `${turn.nodes.length} nodes · ${formatTimestamp(turn.startTs)}`),
+        );
+        turnBlock.append(turnRow);
+
+        if (!turnCollapsed) {
+          for (const child of turn.nodes) {
+            turnBlock.append(renderTreeChild(child));
+          }
+        }
+        promptBlock.append(turnBlock);
+      }
+      for (const orphan of prompt.orphanNodes || []) {
+        promptBlock.append(renderTreeChild(orphan));
+      }
+    }
+    fragment.append(promptBlock);
+  }
+  replace(elements.requestList, fragment);
+}
+
+function renderTreeChild(child) {
+  const row = node("button", `tree-row node-row ${child.kind}`);
+  row.type = "button";
+  row.dataset.nodeKind = child.kind;
+  row.dataset.nodeId = child.id;
+  if (child.exchangeId) row.dataset.exchangeId = child.exchangeId;
+  row.setAttribute("aria-current", String(isSelectedNode(child.kind, child.id)));
+
+  if (child.kind === "generation") {
+    const ex = child.exchange;
+    const status = exchangeState(ex);
+    const head = node("div", "tree-row-head");
+    head.append(
+      node("span", "tree-kind gen", "LLM"),
+      node("span", "tree-title", modelFor(ex)),
+      node("span", `state-tag ${status}`, stateLabel(status)),
+    );
+    row.append(
+      head,
+      node("div", "tree-meta", `${formatDuration(exchangeDuration(ex))} · ${formatTokens(ex?.usage?.totalTokens)} · ${formatCost(ex?.usage?.costTotal)}`),
+    );
+    return row;
+  }
+
+  if (child.kind === "tool") {
+    const head = node("div", "tree-row-head");
+    append(
+      head,
+      node("span", `tree-kind tool${child.isError ? " error" : ""}`, "TOOL"),
+      node("span", "tree-title", child.toolName || "?"),
+      child.isError ? node("span", "state-tag error", t("failed")) : null,
+    );
+    const preview = truncate(
+      typeof child.args === "string" ? child.args : prettyJson(child.args || child.result?.contentText || ""),
+      80,
+    );
+    row.append(head, node("div", "tree-meta", preview));
+    return row;
+  }
+
+  if (child.kind === "message") {
+    const head = node("div", "tree-row-head");
+    head.append(
+      node("span", `tree-kind msg ${child.role || ""}`, roleName(child.role)),
+      node("span", "tree-title", truncate(child.message?.text || child.stopReason || "", 72)),
+    );
+    row.append(head, node("div", "tree-meta", formatTimestamp(child.ts)));
+    return row;
+  }
+
+  row.append(node("div", "tree-row-head", child.kind));
+  return row;
 }
 
 export function renderRequests() {
@@ -219,6 +368,10 @@ export function renderRequests() {
   }
   if (state.error) {
     replace(elements.requestList, emptyState(t("loadFailed"), t("retryHint"), true));
+    return;
+  }
+  if (state.listMode === "turns") {
+    renderTurnTree();
     return;
   }
   const matches = visibleExchanges();
@@ -269,9 +422,14 @@ function metric(value, label) {
 }
 
 export function renderInspectorHeader() {
+  const treeNode = selectedTreeNode();
+  if (treeNode && treeNode.kind !== "generation") {
+    renderNodeHeader(treeNode);
+    return;
+  }
   const exchange = selectedExchange();
   if (!exchange) {
-    const eyebrow = node("p", "eyebrow", "REQUEST EVIDENCE");
+    const eyebrow = node("p", "eyebrow", t("evidenceEyebrow"));
     replace(elements.inspectorIdentity, eyebrow, node("h1", "", t("selectRequest")));
     replace(elements.inspectorMetrics);
     return;
@@ -285,6 +443,61 @@ export function renderInspectorHeader() {
     metric(formatTokens(exchange.usage?.totalTokens), t("tokens")),
     metric(formatCost(exchange.usage?.costTotal), t("cost")),
   );
+}
+
+function renderNodeHeader(treeNode) {
+  if (treeNode.kind === "prompt" || treeNode.kind === "input") {
+    replace(
+      elements.inspectorIdentity,
+      node("p", "eyebrow", t("prompt")),
+      node("h1", "", truncate(treeNode.input || t("emptyPrompt"), 96)),
+    );
+    replace(
+      elements.inspectorMetrics,
+      metric(treeNode.turns?.length || 0, t("turnCount")),
+      metric(formatTimestamp(treeNode.startTs), t("started")),
+    );
+    return;
+  }
+  if (treeNode.kind === "turn") {
+    replace(
+      elements.inspectorIdentity,
+      node("p", "eyebrow", t("turn")),
+      node("h1", "", `Turn #${treeNode.turnIndex} · ${treeNode.stopReason || t("waiting")}`),
+    );
+    replace(
+      elements.inspectorMetrics,
+      metric(treeNode.nodes?.length || 0, t("nodes")),
+      metric(formatTokens(treeNode.usage?.totalTokens), t("tokens")),
+      metric(formatCost(treeNode.usage?.costTotal), t("cost")),
+    );
+    return;
+  }
+  if (treeNode.kind === "tool") {
+    replace(
+      elements.inspectorIdentity,
+      node("p", "eyebrow", t("toolCalls")),
+      node("h1", "", treeNode.toolName || "tool"),
+    );
+    replace(
+      elements.inspectorMetrics,
+      metric(treeNode.isError ? t("failed") : t("success"), t("status")),
+      metric(truncate(String(treeNode.toolCallId || ""), 18), t("callId")),
+    );
+    return;
+  }
+  if (treeNode.kind === "message") {
+    replace(
+      elements.inspectorIdentity,
+      node("p", "eyebrow", roleName(treeNode.role)),
+      node("h1", "", truncate(treeNode.message?.text || treeNode.stopReason || t("emptyValue"), 96)),
+    );
+    replace(
+      elements.inspectorMetrics,
+      metric(treeNode.stopReason || "—", t("status")),
+      metric(formatTokens(treeNode.usage?.totalTokens), t("tokens")),
+    );
+  }
 }
 
 function renderTabs() {
@@ -668,11 +881,126 @@ function renderRaw(exchange) {
   return view;
 }
 
+function renderNodeContent(treeNode) {
+  const view = node("div", "evidence-view");
+
+  if (treeNode.kind === "prompt" || treeNode.kind === "input") {
+    const section = node("section", "evidence-section");
+    section.append(sectionHeading(t("userInput"), treeNode.inputSource || ""));
+    section.append(node("pre", "stream-output", treeNode.input || t("emptyPrompt")));
+    view.append(section);
+    const turns = node("section", "evidence-section");
+    turns.append(sectionHeading(t("turns"), String(treeNode.turns?.length || 0)));
+    const list = node("div", "timeline");
+    for (const turn of treeNode.turns || []) {
+      const row = node("div", "timeline-row");
+      row.append(
+        node("span", "timeline-time", formatClock(turn.startTs)),
+        node("span", "timeline-kind", `T${turn.turnIndex}`),
+        node("span", "timeline-summary", `${turn.nodes.length} nodes · ${turn.stopReason || ""}`),
+      );
+      list.append(row);
+    }
+    turns.append(list);
+    view.append(turns);
+    return view;
+  }
+
+  if (treeNode.kind === "turn") {
+    const section = node("section", "evidence-section");
+    section.append(sectionHeading(t("turn"), `T${treeNode.turnIndex}`));
+    section.append(kvTable([
+      [t("status"), treeNode.stopReason],
+      [t("started"), formatTimestamp(treeNode.startTs)],
+      [t("completed"), formatTimestamp(treeNode.endTs)],
+      [t("tokens"), formatTokens(treeNode.usage?.totalTokens)],
+      [t("cost"), formatCost(treeNode.usage?.costTotal)],
+    ]));
+    view.append(section);
+    const nodes = node("section", "evidence-section");
+    nodes.append(sectionHeading(t("nodes"), String(treeNode.nodes?.length || 0)));
+    const list = node("div", "timeline");
+    for (const child of treeNode.nodes || []) {
+      const row = node("div", "timeline-row");
+      let summary = child.kind;
+      if (child.kind === "generation") summary = modelFor(child.exchange);
+      if (child.kind === "tool") summary = `${child.toolName} ${child.isError ? "error" : "ok"}`;
+      if (child.kind === "message") summary = `${child.role}: ${truncate(child.message?.text || "", 80)}`;
+      row.append(
+        node("span", "timeline-time", formatClock(child.ts)),
+        node("span", "timeline-kind", child.kind),
+        node("span", "timeline-summary", summary),
+      );
+      list.append(row);
+    }
+    nodes.append(list);
+    view.append(nodes);
+    if (treeNode.usage) {
+      view.append(codeSection(t("usage"), "turn", prettyJson(treeNode.usage), null));
+    }
+    return view;
+  }
+
+  if (treeNode.kind === "tool") {
+    const section = node("section", "evidence-section");
+    section.append(sectionHeading(t("toolCalls"), treeNode.toolName));
+    section.append(kvTable([
+      [t("callId"), treeNode.toolCallId],
+      [t("status"), treeNode.isError ? t("failed") : t("success")],
+    ]));
+    view.append(section);
+    view.append(codeSection(t("arguments"), "", prettyJson(treeNode.args ?? {}), "tool-args"));
+    const resultText =
+      treeNode.result?.contentText
+      ?? treeNode.result?.resultText
+      ?? prettyJson(treeNode.result?.content ?? treeNode.result ?? t("noResult"));
+    view.append(codeSection(t("result"), treeNode.isError ? t("failed") : "", resultText, "tool-result"));
+    return view;
+  }
+
+  if (treeNode.kind === "message") {
+    const msg = treeNode.message || {};
+    view.append(
+      messageRow({
+        role: msg.role || treeNode.role,
+        text: msg.text || "",
+        media: [],
+        toolCalls: (msg.toolCalls || []).map((c) => ({
+          callId: c.id,
+          name: c.name,
+          arguments: prettyJson(c.arguments),
+        })),
+        toolResults: [],
+      }),
+    );
+    if (msg.thinking) {
+      const details = node("details", "reasoning-block");
+      details.open = true;
+      details.append(node("summary", "", t("reasoning")), node("pre", "", msg.thinking));
+      view.append(details);
+    }
+    if (msg.usage || treeNode.usage) {
+      view.append(codeSection(t("usage"), "", prettyJson(msg.usage || treeNode.usage), null));
+    }
+    view.append(codeSection(t("rawEvidence"), treeNode.id, prettyJson(msg), "raw"));
+    return view;
+  }
+
+  return emptyState(t("selectRequest"), t("noSelectionHint"));
+}
+
 export function renderInspector() {
   renderInspectorHeader();
+  const treeNode = selectedTreeNode();
+  const showWireTabs = !treeNode || treeNode.kind === "generation";
+  elements.inspectorTabs.hidden = !showWireTabs;
   renderTabs();
   if (state.loadingHistory) {
     replace(elements.inspectorPanel, skeleton(8));
+    return;
+  }
+  if (treeNode && treeNode.kind !== "generation") {
+    replace(elements.inspectorPanel, renderNodeContent(treeNode));
     return;
   }
   const exchange = selectedExchange();
