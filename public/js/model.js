@@ -10,7 +10,7 @@ export const state = {
   /** @type {{ kind: 'prompt'|'turn'|'generation'|'tool'|'message'|'input', id: string } | null} */
   selectedNode: null,
   /** list mode: turns (session tree) | requests (HTTP ledger) */
-  listMode: "requests",
+  listMode: "turns",
   exchanges: new Map(),
   piEvents: [],
   metrics: null,
@@ -190,6 +190,66 @@ export function exchangeDuration(exchange) {
 
 export function exchangeTtft(exchange) {
   return msBetween(exchange?.request?.ts, exchange?.stream?.firstEventTs);
+}
+
+/** Generation window: first stream event → last stream event. */
+export function exchangeStreamingMs(exchange) {
+  return msBetween(exchange?.stream?.firstEventTs, exchange?.stream?.lastEventTs);
+}
+
+/** Output tokens / generation seconds (Langfuse-aligned outputTokensPerSecond). */
+export function exchangeOutputTps(exchange) {
+  const output = Number(exchange?.usage?.output);
+  const ms = exchangeStreamingMs(exchange);
+  if (!Number.isFinite(output) || output <= 0 || !Number.isFinite(ms) || ms <= 0) return undefined;
+  return output / (ms / 1000);
+}
+
+function formatThinkingValue(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+    return String(value);
+  }
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.effort != null && value.effort !== "") return String(value.effort);
+  if (value.thinking_level != null) return String(value.thinking_level);
+  if (value.thinkingLevel != null) return String(value.thinkingLevel);
+  const budget = value.budget_tokens ?? value.budgetTokens ?? value.thinkingBudget;
+  if (budget != null) {
+    const budgetText = formatThinkingValue(budget);
+    const type = value.type ? String(value.type) : null;
+    if (type && budgetText) return `${type} · ${budgetText}`;
+    return budgetText || type;
+  }
+  if (value.type) return String(value.type);
+  return null;
+}
+
+/**
+ * Provider-neutral thinking / reasoning effort from the request body.
+ * Covers OpenAI reasoning.effort, Anthropic thinking, Google thinkingConfig.
+ */
+export function thinkingLevelForExchange(exchange) {
+  const parameters = requestParametersForExchange(exchange);
+  const byKey = new Map(parameters.map((entry) => [entry.key, entry.value]));
+  for (const key of ["reasoning_effort", "thinking_level", "thinkingLevel", "thinking_budget", "thinkingBudget"]) {
+    const formatted = formatThinkingValue(byKey.get(key));
+    if (formatted) return formatted;
+  }
+  for (const key of ["reasoning", "thinking"]) {
+    const formatted = formatThinkingValue(byKey.get(key));
+    if (formatted) return formatted;
+  }
+  for (const entry of parameters) {
+    const leaf = entry.key.includes(".") ? entry.key.slice(entry.key.lastIndexOf(".") + 1) : entry.key;
+    if (/^thinking(Budget|Level|_budget|_level)?$/i.test(leaf) || leaf === "reasoning_effort") {
+      const formatted = formatThinkingValue(entry.value);
+      if (formatted) return formatted;
+    }
+  }
+  return null;
 }
 
 function searchText(exchange) {

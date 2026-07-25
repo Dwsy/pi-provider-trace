@@ -400,6 +400,15 @@ function bindEvents() {
     if (row) selectExchange(row.dataset.exchangeId);
   });
 
+  requestList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const toggle = event.target.closest("[data-tree-toggle]");
+    if (!toggle) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTreeCollapse(toggle.dataset.treeToggle);
+  });
+
   document.getElementById("listModeToggle")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-list-mode]");
     if (!button) return;

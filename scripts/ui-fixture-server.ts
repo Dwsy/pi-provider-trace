@@ -50,6 +50,7 @@ writeTrace({
 		top_p: 0.9,
 		stream: true,
 		tool_choice: { type: "auto" },
+		thinking: { type: "enabled", budget_tokens: 8000 },
 		system: "You are inspecting a local developer tool.",
 		messages: [{ role: "user", content: [{ type: "text", text: "Inspect src/logger.ts and explain the persistence path." }] }],
 		tools: [

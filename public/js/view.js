@@ -3,6 +3,7 @@ import {
   availableProviders,
   buildSessionTree,
   exchangeDuration,
+  exchangeOutputTps,
   exchangeState,
   exchangeTtft,
   linkedPiEvents,
@@ -18,6 +19,7 @@ import {
   sessionStats,
   sessionTreeStats,
   state,
+  thinkingLevelForExchange,
   timelineForExchange,
   toolCallsForExchange,
   toolDefinitionsForExchange,
@@ -32,6 +34,7 @@ import {
   formatDuration,
   formatTimestamp,
   formatTokens,
+  formatTps,
   prettyJson,
   truncate,
 } from "./format.js";
@@ -234,13 +237,50 @@ function isSelectedNode(kind, id) {
 }
 
 function treeToggle(scope, id, collapsed) {
-  const button = node("button", "tree-toggle");
-  button.type = "button";
-  button.dataset.treeToggle = `${scope}:${id}`;
-  button.dataset.collapsed = String(collapsed);
-  button.setAttribute("aria-expanded", String(!collapsed));
-  button.textContent = collapsed ? "▸" : "▾";
-  return button;
+  const toggle = node("span", "tree-toggle");
+  toggle.dataset.treeToggle = `${scope}:${id}`;
+  toggle.dataset.collapsed = String(collapsed);
+  toggle.setAttribute("role", "button");
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", collapsed ? "expand" : "collapse");
+  toggle.tabIndex = 0;
+  toggle.textContent = "›";
+  return toggle;
+}
+
+function treeAside(...parts) {
+  const text = parts.filter(Boolean).join(" · ");
+  return text ? node("span", "tree-aside", text) : null;
+}
+
+function turnNodeCounts(turn) {
+  let gens = 0;
+  let tools = 0;
+  let msgs = 0;
+  for (const child of turn.nodes || []) {
+    if (child.kind === "generation") gens += 1;
+    else if (child.kind === "tool") tools += 1;
+    else if (child.kind === "message") msgs += 1;
+  }
+  const parts = [];
+  if (gens) parts.push(`${gens} llm`);
+  if (tools) parts.push(`${tools} tool`);
+  if (msgs) parts.push(`${msgs} msg`);
+  return parts.join(" · ");
+}
+
+function stopReasonLabel(reason) {
+  if (!reason) return t("turn");
+  const map = {
+    toolUse: "tool_use",
+    tool_use: "tool_use",
+    endTurn: "end",
+    end_turn: "end",
+    stop: "stop",
+    maxTokens: "max_tokens",
+    max_tokens: "max_tokens",
+  };
+  return map[reason] || String(reason);
 }
 
 function renderTurnTree() {
@@ -249,66 +289,72 @@ function renderTurnTree() {
     replace(elements.requestList, emptyState(t("noTurns"), t("noTurnsHint")));
     return;
   }
-  const fragment = document.createDocumentFragment();
+  const root = node("div", "turn-tree");
   for (const prompt of tree.prompts) {
     const promptCollapsed = state.collapsedPrompts.has(prompt.id);
-    const promptBlock = node("div", "tree-prompt");
-    const promptRow = node("button", "tree-row prompt-row");
+    const promptBlock = node("div", `tree-block${promptCollapsed ? " is-collapsed" : ""}`);
+
+    const wrap = node("div", "tree-line depth-0");
+    const promptRow = node("button", "tree-row");
     promptRow.type = "button";
     promptRow.dataset.nodeKind = "prompt";
     promptRow.dataset.nodeId = prompt.id;
     promptRow.setAttribute("aria-current", String(isSelectedNode("prompt", prompt.id) || isSelectedNode("input", prompt.id)));
-    const promptHead = node("div", "tree-row-head");
-    promptHead.append(
-      treeToggle("prompt", prompt.id, promptCollapsed),
-      node("span", "tree-kind prompt", t("prompt")),
-      node("span", "tree-title", truncate(prompt.input || t("emptyPrompt"), 72)),
+    append(
+      promptRow,
+      node("span", "tree-label", truncate(prompt.input || t("emptyPrompt"), 64)),
+      treeAside(
+        prompt.turns.length ? `${prompt.turns.length}${currentChinese() ? "回合" : "T"}` : null,
+        formatClock(prompt.startTs),
+      ),
     );
-    const promptMeta = node("div", "tree-meta", `${prompt.turns.length} ${t("turnCount")} · ${formatTimestamp(prompt.startTs)}`);
-    promptRow.append(promptHead, promptMeta);
-    promptBlock.append(promptRow);
+    wrap.append(treeToggle("prompt", prompt.id, promptCollapsed), promptRow);
+    promptBlock.append(wrap);
 
     if (!promptCollapsed) {
-      for (const turn of prompt.turns) {
-        const turnCollapsed = state.collapsedTurns.has(turn.id);
-        const turnBlock = node("div", "tree-turn");
-        const turnRow = node("button", "tree-row turn-row");
-        turnRow.type = "button";
-        turnRow.dataset.nodeKind = "turn";
-        turnRow.dataset.nodeId = turn.id;
-        turnRow.setAttribute("aria-current", String(isSelectedNode("turn", turn.id)));
-        const turnHead = node("div", "tree-row-head");
-        append(
-          turnHead,
-          treeToggle("turn", turn.id, turnCollapsed),
-          node("span", "tree-kind turn", `T${turn.turnIndex}`),
-          node("span", "tree-title", turn.stopReason || t("turn")),
-          turn.usage ? node("span", "tree-badge", formatTokens(turn.usage.totalTokens)) : null,
-        );
-        turnRow.append(
-          turnHead,
-          node("div", "tree-meta", `${turn.nodes.length} nodes · ${formatTimestamp(turn.startTs)}`),
-        );
-        turnBlock.append(turnRow);
-
-        if (!turnCollapsed) {
-          for (const child of turn.nodes) {
-            turnBlock.append(renderTreeChild(child));
-          }
-        }
-        promptBlock.append(turnBlock);
-      }
-      for (const orphan of prompt.orphanNodes || []) {
-        promptBlock.append(renderTreeChild(orphan));
-      }
+      const children = node("div", "tree-children");
+      for (const turn of prompt.turns) children.append(renderTurnBlock(turn));
+      for (const orphan of prompt.orphanNodes || []) children.append(renderTreeChild(orphan));
+      promptBlock.append(children);
     }
-    fragment.append(promptBlock);
+    root.append(promptBlock);
   }
-  replace(elements.requestList, fragment);
+  replace(elements.requestList, root);
+}
+
+function renderTurnBlock(turn) {
+  const turnCollapsed = state.collapsedTurns.has(turn.id);
+  const block = node("div", `tree-block${turnCollapsed ? " is-collapsed" : ""}`);
+  const wrap = node("div", "tree-line depth-1");
+  const row = node("button", "tree-row");
+  row.type = "button";
+  row.dataset.nodeKind = "turn";
+  row.dataset.nodeId = turn.id;
+  row.setAttribute("aria-current", String(isSelectedNode("turn", turn.id)));
+  append(
+    row,
+    node("span", "tree-index", `T${turn.turnIndex}`),
+    node("span", "tree-label", stopReasonLabel(turn.stopReason)),
+    treeAside(
+      turn.usage ? formatTokens(turn.usage.totalTokens) : null,
+      turnNodeCounts(turn) || null,
+      formatClock(turn.startTs),
+    ),
+  );
+  wrap.append(treeToggle("turn", turn.id, turnCollapsed), row);
+  block.append(wrap);
+
+  if (!turnCollapsed && turn.nodes?.length) {
+    const children = node("div", "tree-children");
+    for (const child of turn.nodes) children.append(renderTreeChild(child));
+    block.append(children);
+  }
+  return block;
 }
 
 function renderTreeChild(child) {
-  const row = node("button", `tree-row node-row ${child.kind}`);
+  const wrap = node("div", "tree-line depth-2 is-leaf");
+  const row = node("button", "tree-row");
   row.type = "button";
   row.dataset.nodeKind = child.kind;
   row.dataset.nodeId = child.id;
@@ -318,47 +364,47 @@ function renderTreeChild(child) {
   if (child.kind === "generation") {
     const ex = child.exchange;
     const status = exchangeState(ex);
-    const head = node("div", "tree-row-head");
-    head.append(
-      node("span", "tree-kind gen", "LLM"),
-      node("span", "tree-title", modelFor(ex)),
-      node("span", `state-tag ${status}`, stateLabel(status)),
-    );
-    row.append(
-      head,
-      node("div", "tree-meta", `${formatDuration(exchangeDuration(ex))} · ${formatTokens(ex?.usage?.totalTokens)} · ${formatCost(ex?.usage?.costTotal)}`),
-    );
-    return row;
-  }
-
-  if (child.kind === "tool") {
-    const head = node("div", "tree-row-head");
     append(
-      head,
-      node("span", `tree-kind tool${child.isError ? " error" : ""}`, "TOOL"),
-      node("span", "tree-title", child.toolName || "?"),
-      child.isError ? node("span", "state-tag error", t("failed")) : null,
+      row,
+      node("span", "tree-kind-text gen", "llm"),
+      node("span", "tree-label", modelFor(ex)),
+      treeAside(
+        formatDuration(exchangeDuration(ex)),
+        formatTokens(ex?.usage?.totalTokens),
+        status === "ok" ? null : stateLabel(status),
+      ),
     );
+    if (status === "error") row.classList.add("is-error");
+    if (status === "live") row.classList.add("is-live");
+  } else if (child.kind === "tool") {
     const preview = truncate(
-      typeof child.args === "string" ? child.args : prettyJson(child.args || child.result?.contentText || ""),
-      80,
+      typeof child.args === "string"
+        ? child.args
+        : child.args && typeof child.args === "object"
+          ? Object.values(child.args).map(String).join(" ")
+          : child.result?.contentText || "",
+      48,
     );
-    row.append(head, node("div", "tree-meta", preview));
-    return row;
+    append(
+      row,
+      node("span", `tree-kind-text tool${child.isError ? " error" : ""}`, "tool"),
+      node("span", "tree-label", child.toolName || "?"),
+      treeAside(preview, child.isError ? t("failed") : null),
+    );
+    if (child.isError) row.classList.add("is-error");
+  } else if (child.kind === "message") {
+    append(
+      row,
+      node("span", `tree-kind-text msg ${child.role || ""}`, roleName(child.role)),
+      node("span", "tree-label", truncate(child.message?.text || child.stopReason || t("emptyValue"), 56)),
+      treeAside(formatClock(child.ts)),
+    );
+  } else {
+    append(row, node("span", "tree-label", child.kind));
   }
 
-  if (child.kind === "message") {
-    const head = node("div", "tree-row-head");
-    head.append(
-      node("span", `tree-kind msg ${child.role || ""}`, roleName(child.role)),
-      node("span", "tree-title", truncate(child.message?.text || child.stopReason || "", 72)),
-    );
-    row.append(head, node("div", "tree-meta", formatTimestamp(child.ts)));
-    return row;
-  }
-
-  row.append(node("div", "tree-row-head", child.kind));
-  return row;
+  wrap.append(node("span", "tree-spacer"), row);
+  return wrap;
 }
 
 export function renderRequests() {
@@ -439,6 +485,7 @@ export function renderInspectorHeader() {
   replace(
     elements.inspectorMetrics,
     metric(formatDuration(exchangeTtft(exchange)), t("ttft")),
+    metric(formatTps(exchangeOutputTps(exchange)), t("outputRate")),
     metric(formatDuration(exchangeDuration(exchange)), t("duration")),
     metric(formatTokens(exchange.usage?.totalTokens), t("tokens")),
     metric(formatCost(exchange.usage?.costTotal), t("cost")),
@@ -508,48 +555,101 @@ function renderTabs() {
 
 function sectionHeading(title, meta) {
   const root = node("div", "section-heading");
-  const copy = node("div");
-  copy.append(node("h2", "", title));
-  if (meta) copy.append(node("p", "", meta));
-  root.append(copy);
+  root.append(node("h2", "", title));
+  if (meta) root.append(node("p", "section-meta", meta));
   return root;
 }
 
-function stage(label, value, status) {
-  const root = node("li", `stage ${status || ""}`);
-  const header = node("div", "stage-header");
-  header.append(node("span", "stage-dot"), node("strong", "", label));
-  root.append(header, node("span", "stage-value", value || t("waiting")));
+function flowStep(label, value, status) {
+  const root = node("li", `flow-step ${status || ""}`.trim());
+  root.append(node("span", "flow-step-label", label), node("span", "flow-step-value", value || t("waiting")));
   return root;
+}
+
+function renderFlowMeta(exchange) {
+  const meta = node("div", "flow-meta");
+  meta.id = "liveFlowMeta";
+  const value = exchangeState(exchange);
+  const flowState = node("span", "flow-state");
+  flowState.id = "liveFlowState";
+  if (value === "error") flowState.classList.add("status-error");
+  if (value === "live") flowState.classList.add("status-live");
+  if (value === "ok") flowState.classList.add("status-ok");
+  flowState.append(node("span", "status-dot"), node("span", "", stateLabel(value)));
+  meta.append(flowState);
+
+  const facts = [`${providerFor(exchange)}/${modelFor(exchange)}`];
+  const thinking = thinkingLevelForExchange(exchange);
+  if (thinking) facts.push(`${t("thinkingLevel")} ${thinking}`);
+  const input = exchange?.usage?.input;
+  if (input) facts.push(`${t("inTokens")} ${formatTokens(input)}`);
+  const output = exchange?.usage?.output;
+  if (output) facts.push(`${t("outTokens")} ${formatTokens(output)}`);
+  meta.append(node("span", "flow-facts", facts.join(" · ")));
+  return meta;
 }
 
 function renderStages(exchange) {
   const streamState = exchangeState(exchange);
   const toolCount = exchange.stream?.toolCalls?.length || 0;
-  const rail = node("ol", "stage-rail");
+  const tps = exchangeOutputTps(exchange);
+  const rail = node("ol", "flow-rail");
   rail.id = "liveStageRail";
   rail.append(
-    stage(t("requestSent"), formatClock(exchange.request?.ts), exchange.request ? "done" : ""),
-    stage(t("headersReceived"), exchange.response?.status ? `HTTP ${exchange.response.status}` : "", exchange.response ? "done" : streamState === "error" ? "error" : ""),
-    stage(t("firstToken"), formatDuration(exchangeTtft(exchange)), exchange.stream?.firstEventTs ? "done" : streamState === "live" ? "active" : ""),
-    stage(t("toolCalls"), toolCount ? String(toolCount) : streamState === "ok" ? t("notCalled") : "0", toolCount ? "done" : streamState === "ok" ? "skipped" : ""),
-    stage(t("completed"), formatDuration(exchangeDuration(exchange)), streamState === "ok" ? "done" : streamState === "error" ? "error" : streamState === "live" ? "active" : ""),
+    flowStep(t("requestSent"), formatClock(exchange.request?.ts), exchange.request ? "done" : ""),
+    flowStep(
+      t("headersReceived"),
+      exchange.response?.status ? `HTTP ${exchange.response.status}` : "",
+      exchange.response ? "done" : streamState === "error" ? "error" : "",
+    ),
+    flowStep(
+      t("firstToken"),
+      formatDuration(exchangeTtft(exchange)),
+      exchange.stream?.firstEventTs ? "done" : streamState === "live" ? "active" : "",
+    ),
+    flowStep(
+      t("outputRate"),
+      formatTps(tps),
+      tps != null ? "done" : streamState === "live" ? "active" : streamState === "ok" ? "skipped" : "",
+    ),
+    flowStep(
+      t("flowTools"),
+      toolCount ? String(toolCount) : streamState === "ok" ? t("notCalled") : "0",
+      toolCount ? "done" : streamState === "ok" ? "skipped" : "",
+    ),
+    flowStep(
+      t("completed"),
+      formatDuration(exchangeDuration(exchange)),
+      streamState === "ok" ? "done" : streamState === "error" ? "error" : streamState === "live" ? "active" : "",
+    ),
   );
   return rail;
 }
 
 function roleName(role) {
   const value = String(role || "message").toLowerCase();
+  if (currentChinese()) {
+    const labels = {
+      user: "用户",
+      assistant: "助手",
+      system: "系统",
+      developer: "开发",
+      tool: "工具",
+      model: "模型",
+      pi: "Pi",
+    };
+    return labels[value] || value;
+  }
   const labels = {
-    user: currentChinese() ? "用户" : "USER",
-    assistant: currentChinese() ? "助手" : "ASSISTANT",
-    system: "SYSTEM",
-    developer: "DEVELOPER",
-    tool: "TOOL",
-    model: "MODEL",
-    pi: "PI INPUT",
+    user: "user",
+    assistant: "asst",
+    system: "sys",
+    developer: "dev",
+    tool: "tool",
+    model: "model",
+    pi: "pi",
   };
-  return labels[value] || value.toUpperCase();
+  return labels[value] || value;
 }
 
 function currentChinese() {
@@ -558,11 +658,11 @@ function currentChinese() {
 
 function messageRow(message) {
   const row = node("div", "message-row");
-  row.append(node("span", `role-label ${message.role || ""}`, roleName(message.role)));
+  row.append(node("span", `message-role ${message.role || ""}`, roleName(message.role)));
   const hasEvents = Boolean(message.toolCalls?.length || message.toolResults?.length);
   const content = node("div", `message-content${message.text?.length > 3600 ? " is-scrollable" : ""}`);
   if (message.text) content.append(node("div", "message-text", message.text));
-  else if (!hasEvents && !message.media?.length) content.append(node("div", "message-text", t("emptyValue")));
+  else if (!hasEvents && !message.media?.length) content.append(node("div", "message-text is-empty", t("emptyValue")));
   if (message.media?.length) {
     const strip = node("div", "media-strip");
     for (const media of message.media) strip.append(node("span", "media-chip", media));
@@ -601,12 +701,16 @@ function contextMessages(exchange) {
 }
 
 function renderContext(exchange) {
-  const section = node("section", "evidence-section");
+  const section = node("section", "evidence-section context-section");
   const messages = contextMessages(exchange);
-  section.append(sectionHeading(t("piContext"), `${messages.length} messages · ${t("piContextHint")}`));
+  const meta = messages.length ? String(messages.length) : null;
+  section.append(sectionHeading(t("piContext"), meta));
   const thread = node("div", "message-thread");
-  if (!messages.length) thread.append(node("div", "notice", t("emptyValue")));
-  for (const message of messages) thread.append(messageRow(message));
+  if (!messages.length) {
+    thread.append(node("p", "message-thread-empty", t("emptyValue")));
+  } else {
+    for (const message of messages) thread.append(messageRow(message));
+  }
   section.append(thread);
   return section;
 }
@@ -619,10 +723,9 @@ function streamMeta(exchange) {
 
 function renderStreamOutput(exchange) {
   const section = node("section", "evidence-section");
-  const heading = sectionHeading(t("modelOutput"), t("modelOutputHint"));
-  const meta = node("p", "section-meta", streamMeta(exchange));
-  meta.id = "liveStreamMeta";
-  heading.append(meta);
+  const heading = sectionHeading(t("modelOutput"), streamMeta(exchange));
+  const meta = heading.querySelector(".section-meta");
+  if (meta) meta.id = "liveStreamMeta";
   section.append(heading);
   if (exchange.stream?.reasoning) {
     const details = node("details", "reasoning-block");
@@ -682,16 +785,7 @@ function renderTools(exchange) {
 function renderFlow(exchange) {
   const view = node("div", "evidence-view");
   const overview = node("section", "flow-overview");
-  const titleRow = node("div", "flow-title-row");
-  const copy = node("div");
-  copy.append(node("h2", "", t("flowTitle")), node("p", "", t("flowHint")));
-  const flowState = node("span", "flow-state");
-  flowState.id = "liveFlowState";
-  flowState.append(node("span", "status-dot"), node("span", "", stateLabel(exchangeState(exchange))));
-  const flowStateClass = exchangeState(exchange) === "error" ? "status-error" : exchangeState(exchange) === "live" ? "status-live" : null;
-  if (flowStateClass) flowState.classList.add(flowStateClass);
-  titleRow.append(copy, flowState);
-  overview.append(titleRow, renderStages(exchange));
+  overview.append(renderFlowMeta(exchange), renderStages(exchange));
   view.append(overview, renderContext(exchange), renderStreamOutput(exchange));
   const tools = renderTools(exchange);
   if (tools) view.append(tools);
@@ -729,7 +823,7 @@ function renderPayload(exchange) {
 function renderRequestParameters(exchange) {
   const parameters = requestParametersForExchange(exchange);
   const section = node("section", "evidence-section input-parameters-section");
-  section.append(sectionHeading(t("requestParameters"), `${parameters.length} · ${t("requestParametersHint")}`));
+  section.append(sectionHeading(t("requestParameters"), String(parameters.length)));
   if (!parameters.length) {
     section.append(node("div", "notice", t("emptyValue")));
     return section;
@@ -752,7 +846,7 @@ function renderRequestParameters(exchange) {
 function renderToolDefinitions(exchange) {
   const definitions = toolDefinitionsForExchange(exchange);
   const section = node("section", "evidence-section input-tools-section");
-  section.append(sectionHeading(t("availableTools"), `${definitions.length} · ${t("availableToolsHint")}`));
+  section.append(sectionHeading(t("availableTools"), String(definitions.length)));
   if (!definitions.length) {
     section.append(node("div", "notice", t("noTools")));
     return section;
@@ -824,6 +918,8 @@ function renderResponseMeta(exchange) {
     [t("events"), stream?.eventCount],
     [t("bytes"), formatBytes(stream?.byteCount)],
     [t("ttft"), formatDuration(exchangeTtft(exchange))],
+    [t("outputRate"), formatTps(exchangeOutputTps(exchange))],
+    [t("thinkingLevel"), thinkingLevelForExchange(exchange) || t("noThinking")],
     [t("duration"), formatDuration(exchangeDuration(exchange))],
     ["finishReason", stream?.finishReason],
   ]));
@@ -1031,21 +1127,14 @@ export function patchLiveInspector(exchange) {
   if (meta) meta.textContent = streamMeta(exchange);
   const oldRail = document.getElementById("liveStageRail");
   if (oldRail) oldRail.replaceWith(renderStages(exchange));
+  const oldFlowMeta = document.getElementById("liveFlowMeta");
+  if (oldFlowMeta) oldFlowMeta.replaceWith(renderFlowMeta(exchange));
   const reasoning = document.querySelector("#liveReasoning pre");
   if (exchange.stream?.reasoning && !reasoning) {
     renderInspector();
     return;
   }
   if (reasoning) reasoning.textContent = exchange.stream?.reasoning || "";
-
-  const flowState = document.getElementById("liveFlowState");
-  if (flowState) {
-    const value = exchangeState(exchange);
-    flowState.classList.toggle("status-live", value === "live");
-    flowState.classList.toggle("status-error", value === "error");
-    const label = flowState.querySelector("span:last-child");
-    if (label) label.textContent = stateLabel(value);
-  }
 
   const calls = toolCallsForExchange(exchange);
   const existing = [...document.querySelectorAll("[data-tool-key]")];

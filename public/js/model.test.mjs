@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  exchangeOutputTps,
   messagesForExchange,
   requestParametersForExchange,
+  thinkingLevelForExchange,
   toolDefinitionsForExchange,
 } from "./model.js";
+import { formatTps } from "./format.js";
 
 function exchange(body) {
   return { request: { bodyPreview: JSON.stringify(body) } };
@@ -35,6 +38,7 @@ assert.deepEqual(parameters.slice(0, 4).map((entry) => entry.key), ["model", "te
 assert.equal(parameters.some((entry) => entry.key === "input"), false);
 assert.equal(parameters.some((entry) => entry.key === "tools"), false);
 assert.deepEqual(parameters.find((entry) => entry.key === "reasoning")?.value, { effort: "medium" });
+assert.equal(thinkingLevelForExchange(openai), "medium");
 
 const tools = toolDefinitionsForExchange(openai);
 assert.equal(tools.length, 2);
@@ -58,5 +62,23 @@ assert.deepEqual(
   ["model", "generationConfig.temperature", "generationConfig.topP", "generationConfig.maxOutputTokens"],
 );
 assert.equal(toolDefinitionsForExchange(google)[0].name, "lookup");
+assert.equal(thinkingLevelForExchange(google), null);
+
+const anthropic = exchange({
+  model: "claude-test",
+  thinking: { type: "enabled", budget_tokens: 8000 },
+});
+assert.equal(thinkingLevelForExchange(anthropic), "enabled · 8k");
+
+const tpsExchange = {
+  usage: { output: 1387 },
+  stream: {
+    firstEventTs: "2026-07-11T08:00:00.790Z",
+    lastEventTs: "2026-07-11T08:00:02.900Z",
+  },
+};
+assert.ok(Math.abs(exchangeOutputTps(tpsExchange) - 1387 / 2.11) < 0.01);
+assert.equal(formatTps(42.35), "42.4/s");
+assert.equal(formatTps(0), "—");
 
 console.log("model.test.mjs: ok");

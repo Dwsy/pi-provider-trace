@@ -53,6 +53,15 @@ export function formatTokens(value) {
   return `${(number / 1_000_000).toFixed(1)}m`;
 }
 
+/** Output tokens per second; compact mono-friendly form. */
+export function formatTps(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "—";
+  if (number < 10) return `${number.toFixed(2)}/s`;
+  if (number < 100) return `${number.toFixed(1)}/s`;
+  return `${Math.round(number)}/s`;
+}
+
 export function formatCost(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return "—";
