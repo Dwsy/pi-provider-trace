@@ -1,5 +1,6 @@
 import { t, applyStaticText } from "./i18n.js";
 import {
+  RENDER_PAGE,
   availableProviders,
   buildSessionTree,
   exchangeDuration,
@@ -65,6 +66,7 @@ const elements = {
   followButton: document.getElementById("followButton"),
   connectionState: document.getElementById("connectionState"),
   connectionLabel: document.getElementById("connectionLabel"),
+  liveStatus: document.getElementById("liveStatus"),
   toast: document.getElementById("toast"),
 };
 
@@ -83,10 +85,43 @@ function replace(host, ...children) {
   host.replaceChildren(...children.filter(Boolean));
 }
 
-function emptyState(title, hint, error = false) {
+function emptyState(title, hint, error = false, action = null) {
   const root = node("div", error ? "error-state" : "empty-state");
-  root.append(node("span", "empty-rule"), node("h2", "", title), node("p", "", hint));
+  root.append(node("h2", "", title), node("p", "", hint));
+  if (action) {
+    const button = node("button", "text-button", action.label);
+    button.type = "button";
+    button.dataset.action = action.name;
+    root.append(button);
+  }
   return root;
+}
+
+/** True when the visible set is narrowed by user input rather than genuinely empty. */
+function requestsFiltered() {
+  return Boolean(state.query.trim() || state.providerFilter || state.statusFilter);
+}
+
+/**
+ * Renders the next page of a long list. The button is both the keyboard affordance
+ * and the scroll sentinel, so a mouse user never has to click it.
+ */
+function showMore(scope, remaining) {
+  const button = node("button", "show-more", t("showMore", { count: remaining }));
+  button.type = "button";
+  button.dataset.showMore = scope;
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    button.click();
+  }, { rootMargin: "120px" });
+  observer.observe(button);
+  return button;
+}
+
+/** Single polite region for milestones; lists themselves stay silent so streaming never spams. */
+export function announce(message) {
+  if (elements.liveStatus) elements.liveStatus.textContent = message;
 }
 
 function skeleton(count = 6) {
@@ -148,11 +183,21 @@ export function renderSessions() {
   }
   const sessions = visible;
   if (!sessions.length) {
-    replace(elements.sessionList, emptyState(t("noSessions"), t("noSessionsHint")));
+    // A search that matches nothing is a different situation from having no sessions at all.
+    const filtered = Boolean(state.query.trim()) && state.sessions.length > 0;
+    replace(elements.sessionList, filtered
+      ? emptyState(t("noSessionMatch"), t("noSessionMatchHint", { query: state.query.trim() }), false, {
+        name: "clear-search",
+        label: t("clearSearch"),
+      })
+      : emptyState(t("noSessions"), t("noSessionsHint"), false, {
+        name: "open-overview",
+        label: t("openOverview"),
+      }));
     return;
   }
   const fragment = document.createDocumentFragment();
-  for (const session of sessions) {
+  for (const session of sessions.slice(0, state.renderLimits.sessions)) {
     const item = node("div", "session-item");
     item.dataset.sessionKey = session.key;
     const selection = node("button", "session-select");
@@ -176,6 +221,8 @@ export function renderSessions() {
     item.append(selection, button);
     fragment.append(item);
   }
+  const remaining = sessions.length - state.renderLimits.sessions;
+  if (remaining > 0) fragment.append(showMore("sessions", remaining));
   replace(elements.sessionList, fragment);
 }
 
@@ -208,6 +255,7 @@ function updateProviderFilter() {
 export function renderSessionContext() {
   const session = selectedSession();
   elements.sessionKeyLabel.textContent = session?.key || "—";
+  elements.sessionKeyLabel.disabled = !session;
   elements.sessionTitle.textContent = session?.label || (state.listMode === "turns" ? t("turns") : t("requests"));
   elements.sessionActions.hidden = !session || state.batchMode;
   if (session) elements.exportSession.href = `/api/download?session=${encodeURIComponent(session.key)}&file=http-sse`;
@@ -248,8 +296,9 @@ function treeToggle(scope, id, collapsed) {
   return toggle;
 }
 
+/** An unmeasured value is dropped from the aside rather than shown as a lone em dash. */
 function treeAside(...parts) {
-  const text = parts.filter(Boolean).join(" · ");
+  const text = parts.filter((part) => part && part !== t("emptyValue")).join(" · ");
   return text ? node("span", "tree-aside", text) : null;
 }
 
@@ -286,11 +335,18 @@ function stopReasonLabel(reason) {
 function renderTurnTree() {
   const tree = buildSessionTree();
   if (!tree.prompts.length) {
-    replace(elements.requestList, emptyState(t("noTurns"), t("noTurnsHint")));
+    replace(elements.requestList, emptyState(t("noTurns"), t("noTurnsHint"), false, {
+      name: "switch-to-requests",
+      label: t("switchToRequests"),
+    }));
     return;
   }
   const root = node("div", "turn-tree");
-  for (const prompt of tree.prompts) {
+  // Window from the end: the tree stays chronological, but the newest turns — the ones
+  // "follow" selects — are always in the DOM, and older prompts load upward on demand.
+  const hidden = Math.max(0, tree.prompts.length - state.renderLimits.prompts);
+  if (hidden > 0) root.append(showMore("prompts", hidden));
+  for (const prompt of tree.prompts.slice(hidden)) {
     const promptCollapsed = state.collapsedPrompts.has(prompt.id);
     const promptBlock = node("div", `tree-block${promptCollapsed ? " is-collapsed" : ""}`);
 
@@ -383,7 +439,7 @@ function renderTreeChild(child) {
         : child.args && typeof child.args === "object"
           ? Object.values(child.args).map(String).join(" ")
           : child.result?.contentText || "",
-      48,
+      28,
     );
     append(
       row,
@@ -416,19 +472,31 @@ export function renderRequests() {
     replace(elements.requestList, emptyState(t("loadFailed"), t("retryHint"), true));
     return;
   }
+  if (!state.selectedSessionKey) {
+    replace(elements.requestList, emptyState(t("noSessionSelected"), t("noSessionSelectedHint"), false, {
+      name: "open-overview",
+      label: t("openOverview"),
+    }));
+    return;
+  }
   if (state.listMode === "turns") {
     renderTurnTree();
     return;
   }
   const matches = visibleExchanges();
   if (!matches.length) {
-    replace(elements.requestList, emptyState(t("noRequests"), t("noRequestsHint")));
+    replace(elements.requestList, requestsFiltered()
+      ? emptyState(t("noRequestMatch"), t("noRequestMatchHint"), false, {
+        name: "clear-filters",
+        label: t("clearFilters"),
+      })
+      : emptyState(t("noRequests"), t("noRequestsHint")));
     return;
   }
 
-  const cap = 300;
+  const limit = state.renderLimits.requests;
   const fragment = document.createDocumentFragment();
-  for (const exchange of matches.slice(0, cap)) {
+  for (const exchange of matches.slice(0, limit)) {
     const status = exchangeState(exchange);
     const tools = exchange.stream?.toolCalls?.length || 0;
     const button = node("button", "request-row");
@@ -437,8 +505,11 @@ export function renderRequests() {
     button.setAttribute("aria-current", String(exchange.id === state.selectedExchangeId));
 
     const primary = node("div", "request-primary");
-    primary.append(
-      node("span", "method-tag", exchange.request?.method || "POST"),
+    // POST is every generation request; only a deviation is worth a tag.
+    const method = exchange.request?.method || "POST";
+    append(
+      primary,
+      method === "POST" ? null : node("span", "method-tag", method),
       node("span", "request-model", modelFor(exchange)),
       node("span", `state-tag ${status}`, stateLabel(status)),
     );
@@ -446,25 +517,29 @@ export function renderRequests() {
     const foot = node("div", "request-foot");
     const left = `${formatTimestamp(exchange.request?.ts)} · ${formatDuration(exchangeDuration(exchange))}`;
     const right = [
-      tools ? `${tools} tools` : "",
-      exchange.usage ? `${formatTokens(exchange.usage.totalTokens)} tok` : "",
+      tools ? `${tools} ${t("flowTools")}` : "",
+      exchange.usage ? `${formatTokens(exchange.usage.totalTokens)} ${t("tokenUnit")}` : "",
       exchange.usage ? formatCost(exchange.usage.costTotal) : "",
     ].filter(Boolean).join(" · ") || providerFor(exchange);
     foot.append(node("span", "", left), node("span", "", right));
     button.append(primary, path, foot);
     fragment.append(button);
   }
-  if (matches.length > cap) {
-    const notice = node("div", "notice", t("shownLimit", { count: cap }));
-    fragment.append(notice);
-  }
+  const remaining = matches.length - limit;
+  if (remaining > 0) fragment.append(showMore("requests", remaining));
   replace(elements.requestList, fragment);
 }
 
 function metric(value, label) {
-  const root = node("div", "metric-inline");
-  root.append(node("strong", "", value), node("span", "", label));
+  const text = String(value ?? "");
+  const root = node("div", `metric-inline${text === "—" ? " is-unmeasured" : ""}`);
+  root.append(node("strong", "", text), node("span", "", label));
   return root;
+}
+
+/** Heading first, then what it belongs to. Nothing sits above an h1. */
+function identity(title, sub) {
+  replace(elements.inspectorIdentity, node("h1", "", title), sub ? node("p", "identity-sub", sub) : null);
 }
 
 export function renderInspectorHeader() {
@@ -475,13 +550,11 @@ export function renderInspectorHeader() {
   }
   const exchange = selectedExchange();
   if (!exchange) {
-    const eyebrow = node("p", "eyebrow", t("evidenceEyebrow"));
-    replace(elements.inspectorIdentity, eyebrow, node("h1", "", t("selectRequest")));
+    identity(t("selectRequest"), null);
     replace(elements.inspectorMetrics);
     return;
   }
-  const eyebrow = node("p", "eyebrow", `${providerFor(exchange)} · ${endpointPath(exchange.request?.url)}`);
-  replace(elements.inspectorIdentity, eyebrow, node("h1", "", modelFor(exchange)));
+  identity(modelFor(exchange), `${providerFor(exchange)} · ${endpointPath(exchange.request?.url)}`);
   replace(
     elements.inspectorMetrics,
     metric(formatDuration(exchangeTtft(exchange)), t("ttft")),
@@ -494,11 +567,7 @@ export function renderInspectorHeader() {
 
 function renderNodeHeader(treeNode) {
   if (treeNode.kind === "prompt" || treeNode.kind === "input") {
-    replace(
-      elements.inspectorIdentity,
-      node("p", "eyebrow", t("prompt")),
-      node("h1", "", truncate(treeNode.input || t("emptyPrompt"), 96)),
-    );
+    identity(truncate(treeNode.input || t("emptyPrompt"), 96), t("prompt"));
     replace(
       elements.inspectorMetrics,
       metric(treeNode.turns?.length || 0, t("turnCount")),
@@ -507,11 +576,7 @@ function renderNodeHeader(treeNode) {
     return;
   }
   if (treeNode.kind === "turn") {
-    replace(
-      elements.inspectorIdentity,
-      node("p", "eyebrow", t("turn")),
-      node("h1", "", `Turn #${treeNode.turnIndex} · ${treeNode.stopReason || t("waiting")}`),
-    );
+    identity(`${t("turn")} ${treeNode.turnIndex}`, treeNode.stopReason || t("waiting"));
     replace(
       elements.inspectorMetrics,
       metric(treeNode.nodes?.length || 0, t("nodes")),
@@ -521,11 +586,7 @@ function renderNodeHeader(treeNode) {
     return;
   }
   if (treeNode.kind === "tool") {
-    replace(
-      elements.inspectorIdentity,
-      node("p", "eyebrow", t("toolCalls")),
-      node("h1", "", treeNode.toolName || "tool"),
-    );
+    identity(treeNode.toolName || "tool", t("toolCalls"));
     replace(
       elements.inspectorMetrics,
       metric(treeNode.isError ? t("failed") : t("success"), t("status")),
@@ -534,11 +595,7 @@ function renderNodeHeader(treeNode) {
     return;
   }
   if (treeNode.kind === "message") {
-    replace(
-      elements.inspectorIdentity,
-      node("p", "eyebrow", roleName(treeNode.role)),
-      node("h1", "", truncate(treeNode.message?.text || treeNode.stopReason || t("emptyValue"), 96)),
-    );
+    identity(truncate(treeNode.message?.text || treeNode.stopReason || t("emptyValue"), 96), roleName(treeNode.role));
     replace(
       elements.inspectorMetrics,
       metric(treeNode.stopReason || "—", t("status")),
@@ -548,8 +605,12 @@ function renderNodeHeader(treeNode) {
 }
 
 function renderTabs() {
+  // Roving tabindex: the tablist is one tab stop, arrow keys move inside it.
   elements.inspectorTabs.querySelectorAll("[data-tab]").forEach((button) => {
-    button.setAttribute("aria-selected", String(button.dataset.tab === state.activeTab));
+    const selected = button.dataset.tab === state.activeTab;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    if (selected) elements.inspectorPanel.setAttribute("aria-labelledby", button.id);
   });
 }
 
@@ -593,7 +654,7 @@ function renderStages(exchange) {
   const streamState = exchangeState(exchange);
   const toolCount = exchange.stream?.toolCalls?.length || 0;
   const tps = exchangeOutputTps(exchange);
-  const rail = node("ol", "flow-rail");
+  const rail = node("ol", "cell-grid flow-rail");
   rail.id = "liveStageRail";
   rail.append(
     flowStep(t("requestSent"), formatClock(exchange.request?.ts), exchange.request ? "done" : ""),
@@ -726,6 +787,7 @@ function renderStreamOutput(exchange) {
   const heading = sectionHeading(t("modelOutput"), streamMeta(exchange));
   const meta = heading.querySelector(".section-meta");
   if (meta) meta.id = "liveStreamMeta";
+  if (exchange.stream?.text) heading.append(copyButton("output"));
   section.append(heading);
   if (exchange.stream?.reasoning) {
     const details = node("details", "reasoning-block");
@@ -828,7 +890,7 @@ function renderRequestParameters(exchange) {
     section.append(node("div", "notice", t("emptyValue")));
     return section;
   }
-  const grid = node("div", "parameter-grid");
+  const grid = node("div", "cell-grid parameter-grid");
   for (const parameter of parameters) {
     const complex = parameter.value !== null && typeof parameter.value === "object";
     const item = node("div", `parameter-item${complex ? " is-complex" : ""}`);
@@ -921,7 +983,7 @@ function renderResponseMeta(exchange) {
     [t("outputRate"), formatTps(exchangeOutputTps(exchange))],
     [t("thinkingLevel"), thinkingLevelForExchange(exchange) || t("noThinking")],
     [t("duration"), formatDuration(exchangeDuration(exchange))],
-    ["finishReason", stream?.finishReason],
+    [t("finishReason"), stream?.finishReason],
   ]));
   view.append(response, summary);
   return view;
@@ -992,8 +1054,8 @@ function renderNodeContent(treeNode) {
       const row = node("div", "timeline-row");
       row.append(
         node("span", "timeline-time", formatClock(turn.startTs)),
-        node("span", "timeline-kind", `T${turn.turnIndex}`),
-        node("span", "timeline-summary", `${turn.nodes.length} nodes · ${turn.stopReason || ""}`),
+        node("span", "timeline-kind", `${t("turn")} ${turn.turnIndex}`),
+        node("span", "timeline-summary", [`${turn.nodes.length} ${t("nodes")}`, turn.stopReason].filter(Boolean).join(" · ")),
       );
       list.append(row);
     }
@@ -1020,8 +1082,8 @@ function renderNodeContent(treeNode) {
       const row = node("div", "timeline-row");
       let summary = child.kind;
       if (child.kind === "generation") summary = modelFor(child.exchange);
-      if (child.kind === "tool") summary = `${child.toolName} ${child.isError ? "error" : "ok"}`;
-      if (child.kind === "message") summary = `${child.role}: ${truncate(child.message?.text || "", 80)}`;
+      if (child.kind === "tool") summary = `${child.toolName} · ${child.isError ? t("failed") : t("success")}`;
+      if (child.kind === "message") summary = `${roleName(child.role)}: ${truncate(child.message?.text || "", 80)}`;
       row.append(
         node("span", "timeline-time", formatClock(child.ts)),
         node("span", "timeline-kind", child.kind),
@@ -1032,7 +1094,7 @@ function renderNodeContent(treeNode) {
     nodes.append(list);
     view.append(nodes);
     if (treeNode.usage) {
-      view.append(codeSection(t("usage"), "turn", prettyJson(treeNode.usage), null));
+      view.append(codeSection(t("usage"), `${t("turn")} ${treeNode.turnIndex}`, prettyJson(treeNode.usage), null));
     }
     return view;
   }

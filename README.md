@@ -168,9 +168,28 @@ Priority: runtime `/trace port N` (saved) → `~/.pi/provider-trace/ui-config.js
 ## Observability API
 
 - `GET /api/metrics?session=` — trace + generation metrics (Langfuse-aligned fields, local only)
+- `GET /api/overview?window=24h|7d|30d|all&limit=` — cross-session rollup (see below)
 - `GET/POST /api/scores?session=` — numeric scores
 - `GET /api/media?session=&exchange=` — multimodal refs
 - Architecture: `docs/observability-architecture.md`, `src/observability/processors/`
+
+### `GET /api/overview`
+
+Answers "which model is burning the budget", "did latency regress", and "which sessions are
+failing" by folding the same durable JSONL facts across every session. Read-only: no new capture
+path, no JSONL format change.
+
+Returns `totals`, `sessions[]`, `models[]`, `providers[]`, and a gap-filled `timeline[]` (hourly
+for `24h`, daily otherwise). Frozen response shape: `docs/overview-api-contract.md`.
+
+| Behaviour | Rule |
+|-----------|------|
+| `window` | Defaults to `7d`; an unrecognised value is `400`, never a silent fallback |
+| `limit` | Caps `sessions[]` only (default 50, max 500); `totals`, `models`, `providers`, and `timeline` always cover the whole window |
+| Empty samples | `null`, never `0`, so the UI can distinguish "never measured" from a real zero |
+| Model identity | From the `llm_usage` record, falling back to the request URL host; unresolvable exchanges group under `unknown` rather than being dropped |
+| Bounded reads | At most an 8 MiB tail per session log; hitting the cap sets `scanned.truncated` |
+| Failure | One unreadable session log is skipped and still counted in `scanned.sessions`; the request does not fail |
 
 > **Langfuse production export**: future work, not in this release. Stub only — see `docs/future-langfuse.md`.
 

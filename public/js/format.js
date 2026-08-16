@@ -69,6 +69,39 @@ export function formatCost(value) {
   return `$${number.toFixed(2)}`;
 }
 
+/**
+ * Grouped integer for the overview. Zero is a counted fact there, so it must not
+ * collapse into the em dash that means "no sample".
+ */
+export function formatCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return new Intl.NumberFormat(currentLocale() === "zh" ? "zh-CN" : "en").format(Math.round(number));
+}
+
+/** Compact tokens; unlike formatTokens a measured zero stays "0". */
+export function formatTokensMeasured(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number === 0 ? "0" : formatTokens(number);
+}
+
+/** Cost; unlike formatCost a measured zero stays "$0.00". */
+export function formatCostMeasured(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number === 0 ? "$0.00" : formatCost(number);
+}
+
+/** Ratio in percent. Returns null for an undefined denominator so the caller can show the em dash. */
+export function formatPercent(numerator, denominator) {
+  const top = Number(numerator);
+  const bottom = Number(denominator);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= 0) return null;
+  const percent = (top / bottom) * 100;
+  return `${percent < 10 ? percent.toFixed(1) : Math.round(percent)}%`;
+}
+
 export function formatBytes(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return "0 B";

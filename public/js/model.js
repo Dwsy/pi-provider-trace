@@ -1,6 +1,27 @@
 import { msBetween } from "./format.js";
 
+export const OVERVIEW_WINDOWS = ["24h", "7d", "30d", "all"];
+
+/** Rows added per "show more" step; keeps first paint small on sessions with hundreds of rows. */
+export const RENDER_PAGE = 60;
+
 export const state = {
+  /** top-level surface: the three-pane workbench, or the cross-session overview */
+  surface: "workbench",
+  overview: {
+    window: "7d",
+    data: null,
+    loading: false,
+    error: null,
+    /** true when the payload came from the ?fixture=1 sample instead of /api/overview */
+    fixture: false,
+    sort: {
+      models: { key: "totalCost", direction: "desc" },
+      providers: { key: "totalCost", direction: "desc" },
+      sessions: { key: "lastTs", direction: "desc" },
+    },
+  },
+  renderLimits: { sessions: RENDER_PAGE, requests: RENDER_PAGE, prompts: 12 },
   sessions: [],
   batchMode: false,
   selectedSessionKeys: new Set(),
@@ -36,6 +57,30 @@ export function resetSessionTrace() {
   state.error = null;
   state.collapsedPrompts.clear();
   state.collapsedTurns.clear();
+  resetRenderLimits();
+}
+
+export function resetRenderLimits() {
+  state.renderLimits.sessions = RENDER_PAGE;
+  state.renderLimits.requests = RENDER_PAGE;
+  state.renderLimits.prompts = 12;
+}
+
+/**
+ * Sort overview rows keeping an empty sample (`null`) last in both directions —
+ * a metric nobody measured must never win a "fastest" or "slowest" ranking.
+ */
+export function sortOverviewRows(rows, key, direction = "desc") {
+  const factor = direction === "asc" ? 1 : -1;
+  return [...(rows || [])].sort((left, right) => {
+    const a = left?.[key];
+    const b = right?.[key];
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    if (typeof a === "string" || typeof b === "string") return String(a).localeCompare(String(b)) * factor;
+    return (a - b) * factor;
+  });
 }
 
 function ensureExchange(id) {

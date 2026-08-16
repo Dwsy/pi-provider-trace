@@ -1,14 +1,5 @@
 import { createServer, type Server } from "node:http";
-import {
-	closeSync,
-	createReadStream,
-	existsSync,
-	openSync,
-	readFileSync,
-	readSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { createReadStream, readFileSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -42,9 +33,17 @@ import {
 	rollupObservationMetrics,
 } from "./observability/derive-metrics.js";
 import { extractMediaFromRequestBody } from "./observability/media-extract.js";
+import {
+	collectOverview,
+	isOverviewWindow,
+	parseOverviewLimit,
+} from "./observability/overview.js";
+import { tailJsonl } from "./observability/read-session-log.js";
 import { appendScore, listScores } from "./observability/scores-store.js";
 import type { ScoreEvent } from "./observability/types.js";
-import { StreamAccumulator } from "./stream-result.js";
+
+/** Re-exported for existing consumers; it lives beside the bounded reader that uses it. */
+export { compactLegacySseRecords } from "./observability/read-session-log.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -68,77 +67,6 @@ function broadcast(record: TraceRecord): void {
 			sseClients.delete(client);
 		}
 	}
-}
-
-function tailJsonl(path: string, maxLines = 800): TraceRecord[] {
-	if (!existsSync(path)) return [];
-	let fd: number | null = null;
-	try {
-		const size = statSync(path).size;
-		const maxBytes = 8 * 1024 * 1024;
-		const length = Math.min(size, maxBytes);
-		const start = Math.max(0, size - length);
-		const buffer = Buffer.alloc(length);
-		fd = openSync(path, "r");
-		readSync(fd, buffer, 0, length, start);
-		let raw = buffer.toString("utf8");
-		if (start > 0) {
-			const firstLineEnd = raw.indexOf("\n");
-			raw = firstLineEnd >= 0 ? raw.slice(firstLineEnd + 1) : "";
-		}
-		const lines = raw.split("\n").filter((line) => line.trim());
-		const out: TraceRecord[] = [];
-		for (const line of lines) {
-			try {
-				out.push(JSON.parse(line) as TraceRecord);
-			} catch {
-				// skip
-			}
-		}
-		return compactLegacySseRecords(out).slice(-maxLines);
-	} catch {
-		return [];
-	} finally {
-		if (fd != null) closeSync(fd);
-	}
-}
-
-/** Old captures remain readable without sending thousands of raw rows to the browser. */
-export function compactLegacySseRecords(records: TraceRecord[]): TraceRecord[] {
-	const durableResultIds = new Set(
-		records.filter((record) => record.kind === "stream_result").map((record) => record.id),
-	);
-	const groups = new Map<string, { accumulator: StreamAccumulator; last: TraceRecord }>();
-	const compacted: TraceRecord[] = [];
-
-	for (const record of records) {
-		if (record.kind !== "sse_line") {
-			compacted.push(record);
-			continue;
-		}
-		if (durableResultIds.has(record.id)) continue;
-		let group = groups.get(record.id);
-		if (!group) {
-			group = { accumulator: new StreamAccumulator(), last: record };
-			groups.set(record.id, group);
-		}
-		group.last = record;
-		if (record.line) group.accumulator.acceptLine(record.line, record.ts);
-	}
-
-	for (const [id, group] of groups) {
-		compacted.push({
-			ts: group.last.ts,
-			kind: "stream_result",
-			id,
-			sessionKey: group.last.sessionKey,
-			sessionLabel: group.last.sessionLabel,
-			url: group.last.url,
-			stream: group.accumulator.snapshot("complete"),
-		});
-	}
-
-	return compacted.sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
 function writePortFile(port: number): void {
@@ -331,6 +259,35 @@ function createHandler(getPort: () => number) {
 			return;
 		}
 
+		if (req.method === "GET" && url.pathname === "/api/overview") {
+			const jsonHeaders = {
+				"Content-Type": "application/json; charset=utf-8",
+				"Cache-Control": "no-store",
+			};
+			const windowParam = url.searchParams.get("window") ?? "7d";
+			if (!isOverviewWindow(windowParam)) {
+				res.writeHead(400, jsonHeaders);
+				res.end(JSON.stringify({ error: "bad window" }));
+				return;
+			}
+			const limit = parseOverviewLimit(url.searchParams.get("limit"));
+			if (limit == null) {
+				res.writeHead(400, jsonHeaders);
+				res.end(JSON.stringify({ error: "bad limit" }));
+				return;
+			}
+			let body: string;
+			try {
+				body = JSON.stringify(collectOverview(logDir, { window: windowParam, limit }));
+			} catch {
+				res.writeHead(500, jsonHeaders);
+				res.end(JSON.stringify({ error: "overview failed" }));
+				return;
+			}
+			res.writeHead(200, jsonHeaders);
+			res.end(body);
+			return;
+		}
 
 		if (req.method === "GET" && url.pathname === "/api/scores") {
 			const key = url.searchParams.get("session");

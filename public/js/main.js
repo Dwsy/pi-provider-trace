@@ -2,25 +2,33 @@ import {
   deleteSession as deleteSessionRequest,
   fetchHistory,
   fetchMetrics,
+  fetchOverview,
   fetchSessions,
   fetchStatus,
+  fixtureServed,
   historyBatchDownloadUrl,
   openTraceStream,
 } from "./api.js";
 import { applyStaticText, currentLocale, setLocale, t } from "./i18n.js";
 import {
+  OVERVIEW_WINDOWS,
+  RENDER_PAGE,
   ingestRecord,
   parseBody,
   rawEvidence,
+  resetRenderLimits,
   resetSessionTrace,
   selectTreeNode,
   selectedExchange,
+  selectedTreeNode,
   sortedExchanges,
   state,
   visibleSessions,
 } from "./model.js";
 import { prettyJson } from "./format.js";
+import { renderOverview } from "./overview.js";
 import {
+  announce,
   patchLiveInspector,
   renderAll,
   renderConnection,
@@ -37,6 +45,11 @@ const search = document.getElementById("globalSearch");
 const sessionList = document.getElementById("sessionList");
 const requestList = document.getElementById("requestList");
 const inspectorTabs = document.getElementById("inspectorTabs");
+const inspectorPane = document.querySelector(".inspector-pane");
+const overviewButton = document.getElementById("overviewButton");
+const overviewWindow = document.getElementById("overviewWindow");
+const overviewBody = document.getElementById("overviewBody");
+const shortcutsDialog = document.getElementById("shortcutsDialog");
 const providerFilter = document.getElementById("providerFilter");
 const statusFilter = document.getElementById("statusFilter");
 const followButton = document.getElementById("followButton");
@@ -49,6 +62,7 @@ const toggleRequestsButton = document.getElementById("toggleRequestsButton");
 
 let stopStream = null;
 let sessionLoadController = null;
+let overviewController = null;
 let fullRenderFrame = 0;
 let livePatchFrame = 0;
 let requestListTimer = 0;
@@ -182,6 +196,80 @@ function setMobilePane(pane) {
   app.dataset.mobilePane = pane;
 }
 
+function surfaceFromHash() {
+  return location.hash.replace(/^#\/?/, "") === "overview" ? "overview" : "workbench";
+}
+
+function applySurface() {
+  app.dataset.surface = state.surface;
+  overviewButton.setAttribute("aria-pressed", String(state.surface === "overview"));
+}
+
+function setSurface(surface) {
+  state.surface = surface === "overview" ? "overview" : "workbench";
+  const hash = state.surface === "overview" ? "#overview" : "";
+  if (location.hash !== hash) {
+    if (hash) location.hash = hash;
+    else history.replaceState(null, "", `${location.pathname}${location.search}`);
+  }
+  applySurface();
+  if (state.surface === "overview") {
+    if (!state.overview.data && !state.overview.loading) void loadOverview();
+    else renderOverview();
+    document.getElementById("overviewTitle")?.focus?.();
+  }
+}
+
+async function loadOverview({ force = false } = {}) {
+  const overview = state.overview;
+  overviewController?.abort();
+  const controller = new AbortController();
+  overviewController = controller;
+  overview.loading = true;
+  overview.error = null;
+  if (force) overview.data = null;
+  renderOverview();
+  try {
+    overview.data = await fetchOverview(overview.window, controller.signal);
+    overview.fixture = fixtureServed();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    overview.data = null;
+    overview.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (overviewController === controller) {
+      overview.loading = false;
+      renderOverview();
+    }
+  }
+}
+
+function selectOverviewWindow(windowKey) {
+  if (!OVERVIEW_WINDOWS.includes(windowKey) || windowKey === state.overview.window) return;
+  state.overview.window = windowKey;
+  try { localStorage.setItem("pi-trace-overview-window", windowKey); } catch {}
+  void loadOverview({ force: true });
+}
+
+function toggleOverviewSort(token) {
+  const [scope, key] = String(token || "").split(":");
+  const sort = state.overview.sort[scope];
+  if (!sort || !key) return;
+  const textColumn = key === "key" || key === "provider" || key === "label";
+  sort.direction = sort.key === key ? (sort.direction === "asc" ? "desc" : "asc") : textColumn ? "asc" : "desc";
+  sort.key = key;
+  renderOverview();
+}
+
+function openSessionFromOverview(sessionKey) {
+  setSurface("workbench");
+  if (sessionKey === state.selectedSessionKey && state.exchanges.size) {
+    setMobilePane("requests");
+    return;
+  }
+  void loadSession(sessionKey);
+}
+
 function scheduleFullRender() {
   if (fullRenderFrame) return;
   fullRenderFrame = requestAnimationFrame(() => {
@@ -276,6 +364,7 @@ async function loadSession(sessionKey) {
     if (!signal.aborted) {
       state.loadingHistory = false;
       renderAll();
+      announce(state.error ? t("loadFailed") : t("requestsLoaded", { count: sortedExchanges().length }));
     }
   }
 }
@@ -324,6 +413,30 @@ function selectNode(kind, id, exchangeId) {
   renderInspector();
 }
 
+function setListMode(mode) {
+  state.listMode = mode === "requests" ? "requests" : "turns";
+  try { localStorage.setItem("pi-trace-list-mode", state.listMode); } catch {}
+  renderSessionContext();
+  renderRequests();
+  renderInspector();
+}
+
+/** Recovery path out of an empty result: put the controls back where the user can see they changed. */
+function clearNarrowing(includeFilters) {
+  state.query = "";
+  search.value = "";
+  if (includeFilters) {
+    state.providerFilter = "";
+    state.statusFilter = "";
+    providerFilter.value = "";
+    statusFilter.value = "";
+  }
+  resetRenderLimits();
+  renderSessions();
+  renderRequests();
+  search.focus();
+}
+
 function toggleTreeCollapse(token) {
   const [scope, ...rest] = String(token || "").split(":");
   const id = rest.join(":");
@@ -334,14 +447,30 @@ function toggleTreeCollapse(token) {
   renderRequests();
 }
 
-async function copySelected(kind) {
+/** Resolves a `data-copy` kind against whatever the inspector is currently showing. */
+function copyValue(kind) {
+  if (kind === "sessionKey") return state.selectedSessionKey || "";
+  const treeNode = selectedTreeNode();
+  if (kind === "tool-args") return treeNode?.args == null ? "" : prettyJson(treeNode.args);
+  if (kind === "tool-result") {
+    const result = treeNode?.result;
+    return result?.contentText ?? result?.resultText ?? (result ? prettyJson(result) : "");
+  }
+  if (kind === "raw" && treeNode?.kind === "message") return prettyJson(treeNode.message || treeNode);
   const exchange = selectedExchange();
-  const values = {
-    payload: exchange ? prettyJson(parseBody(exchange)) : "",
-    raw: exchange ? prettyJson(rawEvidence(exchange)) : "",
-    output: exchange?.stream?.text || "",
-  };
-  const text = values[kind] ?? "";
+  if (!exchange) return "";
+  if (kind === "payload") return prettyJson(parseBody(exchange));
+  if (kind === "raw") return prettyJson(rawEvidence(exchange));
+  if (kind === "output") return exchange.stream?.text || "";
+  return "";
+}
+
+async function copySelected(kind) {
+  const text = copyValue(kind);
+  if (!text) {
+    showToast(t("nothingToCopy"));
+    return;
+  }
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -355,6 +484,63 @@ async function copySelected(kind) {
     textarea.remove();
   }
   showToast(t("copied"));
+  announce(t("copied"));
+}
+
+const ROW_SELECTOR = ".session-row, .request-row, .tree-row, .table-link";
+
+function activePane() {
+  const focused = document.activeElement;
+  if (sessionList.contains(focused)) return "sessions";
+  if (requestList.contains(focused)) return "requests";
+  if (inspectorPane.contains(focused)) return "inspector";
+  return state.selectedSessionKey ? "requests" : "sessions";
+}
+
+function paneRows(pane) {
+  const host = state.surface === "overview" ? overviewBody : pane === "sessions" ? sessionList : requestList;
+  return [...host.querySelectorAll(ROW_SELECTOR)];
+}
+
+/** j/k and the arrow keys move real DOM focus, so Enter, the focus ring, and screen readers all follow. */
+function moveRowFocus(delta) {
+  const pane = state.surface === "overview" ? "overview" : activePane() === "sessions" ? "sessions" : "requests";
+  const rows = paneRows(pane);
+  if (!rows.length) return;
+  const current = document.activeElement?.closest?.(ROW_SELECTOR);
+  const index = current ? rows.indexOf(current) : -1;
+  const next = index < 0
+    ? (delta > 0 ? 0 : rows.length - 1)
+    : Math.min(rows.length - 1, Math.max(0, index + delta));
+  rows[next].focus();
+  rows[next].scrollIntoView({ block: "nearest" });
+}
+
+function focusPaneRow(pane) {
+  const rows = paneRows(pane);
+  const current = rows.find((row) => row.getAttribute("aria-current") === "true");
+  (current || rows[0])?.focus();
+}
+
+/** Escape walks back out: overview → workbench, inspector → requests → sessions. */
+function stepBack() {
+  if (state.surface === "overview") {
+    setSurface("workbench");
+    return;
+  }
+  const target = activePane() === "inspector" ? "requests" : "sessions";
+  setMobilePane(target);
+  focusPaneRow(target);
+}
+
+function moveTabFocus(delta) {
+  const tabs = [...inspectorTabs.querySelectorAll("[data-tab]")];
+  const index = tabs.findIndex((tab) => tab.dataset.tab === state.activeTab);
+  const next = tabs[(index + delta + tabs.length) % tabs.length];
+  if (!next) return;
+  state.activeTab = next.dataset.tab;
+  renderInspector();
+  next.focus();
 }
 
 function toggleTheme() {
@@ -411,12 +597,7 @@ function bindEvents() {
 
   document.getElementById("listModeToggle")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-list-mode]");
-    if (!button) return;
-    state.listMode = button.dataset.listMode === "requests" ? "requests" : "turns";
-    try { localStorage.setItem("pi-trace-list-mode", state.listMode); } catch {}
-    renderSessionContext();
-    renderRequests();
-    renderInspector();
+    if (button) setListMode(button.dataset.listMode);
   });
 
   inspectorTabs.addEventListener("click", (event) => {
@@ -426,11 +607,64 @@ function bindEvents() {
     renderInspector();
   });
 
+  inspectorTabs.addEventListener("keydown", (event) => {
+    const steps = { ArrowRight: 1, ArrowLeft: -1 };
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const tabs = [...inspectorTabs.querySelectorAll("[data-tab]")];
+      const target = event.key === "Home" ? tabs[0] : tabs[tabs.length - 1];
+      state.activeTab = target.dataset.tab;
+      renderInspector();
+      target.focus();
+      return;
+    }
+    if (!(event.key in steps)) return;
+    event.preventDefault();
+    moveTabFocus(steps[event.key]);
+  });
+
+  overviewWindow.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-window]");
+    if (button) selectOverviewWindow(button.dataset.window);
+  });
+
+  overviewBody.addEventListener("click", (event) => {
+    const sort = event.target.closest("[data-sort]");
+    if (sort) {
+      toggleOverviewSort(sort.dataset.sort);
+      return;
+    }
+    const open = event.target.closest("[data-overview-session]");
+    if (open) {
+      openSessionFromOverview(open.dataset.overviewSession);
+      return;
+    }
+    const row = event.target.closest("tr[data-session-key]");
+    if (row) openSessionFromOverview(row.dataset.sessionKey);
+  });
+
+  overviewButton.addEventListener("click", () => {
+    setSurface(state.surface === "overview" ? "workbench" : "overview");
+  });
+
   document.addEventListener("click", (event) => {
     const mobileTarget = event.target.closest("[data-mobile-target]")?.dataset.mobileTarget;
     if (mobileTarget) setMobilePane(mobileTarget);
     const copy = event.target.closest("[data-copy]")?.dataset.copy;
     if (copy) void copySelected(copy);
+    const more = event.target.closest("[data-show-more]")?.dataset.showMore;
+    if (more) {
+      state.renderLimits[more] += more === "prompts" ? 12 : RENDER_PAGE;
+      if (more === "sessions") renderSessions();
+      else renderRequests();
+    }
+    const action = event.target.closest("[data-action]")?.dataset.action;
+    if (action === "open-overview") setSurface("overview");
+    if (action === "close-overview") setSurface("workbench");
+    if (action === "overview-retry") void loadOverview({ force: true });
+    if (action === "close-shortcuts") shortcutsDialog.close();
+    if (action === "clear-search" || action === "clear-filters") clearNarrowing(action === "clear-filters");
+    if (action === "switch-to-requests") setListMode("requests");
   });
 
   let searchTimer;
@@ -438,6 +672,7 @@ function bindEvents() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.query = search.value;
+      resetRenderLimits();
       renderSessions();
       renderRequests();
     }, 100);
@@ -445,10 +680,12 @@ function bindEvents() {
 
   providerFilter.addEventListener("change", () => {
     state.providerFilter = providerFilter.value;
+    state.renderLimits.requests = RENDER_PAGE;
     renderRequests();
   });
   statusFilter.addEventListener("change", () => {
     state.statusFilter = statusFilter.value;
+    state.renderLimits.requests = RENDER_PAGE;
     renderRequests();
   });
 
@@ -495,12 +732,21 @@ function bindEvents() {
   toggleRequestsButton.addEventListener("click", () => toggleDesktopPane("requests"));
 
   document.getElementById("themeButton").addEventListener("click", toggleTheme);
+  document.getElementById("shortcutsButton").addEventListener("click", () => {
+    if (!shortcutsDialog.open) shortcutsDialog.showModal();
+  });
   document.getElementById("localeButton").addEventListener("click", () => {
     setLocale(currentLocale() === "zh" ? "en" : "zh");
     applyStaticText();
     renderAll();
+    renderOverview();
   });
   document.getElementById("refreshButton").addEventListener("click", async () => {
+    if (state.surface === "overview") {
+      await loadOverview({ force: true });
+      showToast(t("refreshDone"));
+      return;
+    }
     await refreshSessions({ reloadCurrent: true });
     showToast(t("refreshDone"));
   });
@@ -524,8 +770,47 @@ function bindEvents() {
       event.preventDefault();
       search.focus();
       search.select();
+      return;
     }
-    if (event.key === "Escape" && document.activeElement === search) search.blur();
+    if (event.key === "Escape") {
+      if (shortcutsDialog.open) return;
+      if (document.activeElement === search) {
+        search.blur();
+        return;
+      }
+      stepBack();
+      return;
+    }
+    if (editing || shortcutsDialog.open || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "?") {
+      event.preventDefault();
+      if (!shortcutsDialog.open) shortcutsDialog.showModal();
+      return;
+    }
+    if (event.key === "o") {
+      event.preventDefault();
+      setSurface(state.surface === "overview" ? "workbench" : "overview");
+      return;
+    }
+    // Arrows only traverse rows from a row or from nowhere; inside a scrollable panel or
+    // the chart they keep their native meaning.
+    const onRow = Boolean(document.activeElement?.closest?.(ROW_SELECTOR));
+    const idle = !document.activeElement || document.activeElement === document.body;
+    const arrows = onRow || idle;
+    if (event.key === "j" || (event.key === "ArrowDown" && arrows)) {
+      event.preventDefault();
+      moveRowFocus(1);
+      return;
+    }
+    if (event.key === "k" || (event.key === "ArrowUp" && arrows)) {
+      event.preventDefault();
+      moveRowFocus(-1);
+    }
+  });
+
+  window.addEventListener("hashchange", () => {
+    const surface = surfaceFromHash();
+    if (surface !== state.surface) setSurface(surface);
   });
 
   window.addEventListener("beforeunload", () => {
@@ -539,12 +824,17 @@ async function bootstrap() {
   try {
     const mode = localStorage.getItem("pi-trace-list-mode");
     if (mode === "requests" || mode === "turns") state.listMode = mode;
+    const overviewWindowKey = localStorage.getItem("pi-trace-overview-window");
+    if (OVERVIEW_WINDOWS.includes(overviewWindowKey)) state.overview.window = overviewWindowKey;
   } catch {}
+  state.surface = surfaceFromHash();
+  applySurface();
   applyDesktopLayout();
   bindEvents();
   bindPaneResizers();
   renderStatic();
   renderAll();
+  if (state.surface === "overview") void loadOverview();
   await refreshSessions();
 }
 
