@@ -17,10 +17,44 @@ import {
 	setTraceLogDir,
 	writeTrace,
 } from "./logger.js";
-import { installFetchTrace, isFetchTraceInstalled, uninstallFetchTrace } from "./trace-fetch.js";
-import { attachPiEventTrace, detachPiEventTrace } from "./pi-events.js";
 import { DEFAULT_TRACE_UI_PORT, getTraceUiPort, setTraceUiPort } from "./trace-config.js";
-import { getTraceUiUrl, startTraceWebUi, stopTraceWebUi } from "./web-ui.js";
+// Heavy runtime pieces are loaded on demand. They are only needed once tracing
+// is switched on or the Web UI is opened, so a default (trace off) startup
+// skips them entirely.
+type TraceFetchModule = typeof import("./trace-fetch.js");
+type PiEventsModule = typeof import("./pi-events.js");
+type WebUiModule = typeof import("./web-ui.js");
+
+let traceFetchMod: TraceFetchModule | null = null;
+let piEventsMod: PiEventsModule | null = null;
+let webUiMod: WebUiModule | null = null;
+
+async function loadTraceFetch(): Promise<TraceFetchModule> {
+	traceFetchMod ??= await import("./trace-fetch.js");
+	return traceFetchMod;
+}
+
+async function loadPiEvents(): Promise<PiEventsModule> {
+	piEventsMod ??= await import("./pi-events.js");
+	return piEventsMod;
+}
+
+async function loadWebUi(): Promise<WebUiModule> {
+	webUiMod ??= await import("./web-ui.js");
+	return webUiMod;
+}
+
+function getTraceUiUrl(): string | null {
+	return webUiMod ? webUiMod.getTraceUiUrl() : null;
+}
+
+async function startTraceWebUi(): Promise<string> {
+	return (await loadWebUi()).startTraceWebUi();
+}
+
+async function stopTraceWebUi(): Promise<void> {
+	if (webUiMod) await webUiMod.stopTraceWebUi();
+}
 import { resolveCliLocale } from "./cli-locale.js";
 import { t } from "./web-ui-i18n.js";
 import { resetExchangeContext } from "./http-exchange-context.js";
@@ -29,14 +63,16 @@ function defaultLogDir(): string {
 	return getProviderTraceRoot();
 }
 
-function applyTracing(on: boolean, ctx?: ExtensionContext): void {
+async function applyTracing(on: boolean, ctx?: ExtensionContext): Promise<void> {
 	setTraceLogDir(defaultLogDir());
 	if (ctx) applySessionFromCtx(ctx);
 	setTraceEnabled(on);
 	if (on) {
-		installFetchTrace();
+		const fetchModule = await loadTraceFetch();
+		fetchModule.installFetchTrace();
 		if (piRef) {
-			attachPiEventTrace(piRef);
+			const piEventsModule = await loadPiEvents();
+			piEventsModule.attachPiEventTrace(piRef);
 			attachPayloadHook(piRef);
 		}
 		const s = getActiveSession();
@@ -49,8 +85,8 @@ function applyTracing(on: boolean, ctx?: ExtensionContext): void {
 			message: "pi-provider-trace enabled (fetch patch active)",
 		});
 	} else {
-		uninstallFetchTrace();
-		detachPiEventTrace();
+		traceFetchMod?.uninstallFetchTrace();
+		piEventsMod?.detachPiEventTrace();
 		resetExchangeContext();
 	}
 }
@@ -92,7 +128,7 @@ async function startTraceUiOnly(ctx: ExtensionContext): Promise<string | null> {
 }
 
 function statusLine(loc = resolveCliLocale()): string {
-	const on = isTraceEnabled() && isFetchTraceInstalled();
+	const on = isTraceEnabled() && (traceFetchMod?.isFetchTraceInstalled() ?? false);
 	if (!on) return t(loc, "cmdTraceStatusOff");
 	const dir = getTraceLogDir() ?? defaultLogDir();
 	const ui = getTraceUiUrl();
@@ -123,12 +159,12 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 
 	piRef = pi;
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		applySessionFromCtx(ctx);
 		resetExchangeContext();
 		if (process.argv.includes("--mode") && process.argv.includes("rpc")) return;
 		if (!pi.getFlag("trace")) return;
-		applyTracing(true, ctx);
+		await applyTracing(true, ctx);
 		void startTraceWebUi().catch(() => {});
 	});
 
@@ -139,7 +175,7 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		void stopTraceWebUi();
-		applyTracing(false);
+		void applyTracing(false);
 	});
 
 	const traceSubcommandCompletions = (
@@ -178,14 +214,14 @@ export default function piProviderTrace(pi: ExtensionAPI) {
 			const sub = (parts[0] ?? "").toLowerCase();
 
 			if (sub === "on" || sub === "enable" || sub === "1") {
-				applyTracing(true, ctx);
+				await applyTracing(true, ctx);
 				const url = await startTraceUiOnly(ctx);
 				const uiLine = url ? `\n${t(loc, "cmdTraceUiLine", { url })}` : "";
 				ctx.ui.notify(`${t(loc, "cmdTraceEnabled", { status: statusLine() })}${uiLine}`, "info");
 				return;
 			}
 			if (sub === "off" || sub === "disable" || sub === "0") {
-				applyTracing(false, ctx);
+				await applyTracing(false, ctx);
 				ctx.ui.notify(t(loc, "cmdTraceDisabled"), "info");
 				return;
 			}
